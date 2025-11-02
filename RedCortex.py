@@ -84,7 +84,7 @@ def cmd_scan(args):
     
     # Run discovery
     logger.info("Running endpoint discovery...")
-    endpoints = scanner.discover()
+    endpoints = scanner.scan_target()
     logger.info(f"Found {len(endpoints)} endpoints")
     
     # Run plugins
@@ -338,5 +338,6 @@ def main():
         sys.exit(1)
 if __name__ == '__main__':
     main()
+
 
 
