@@ -1,6 +1,16 @@
 """Result management for RedCortex.
-
 Handles scan results including saving, loading, and reporting.
+
+Result Model Structure:
+    Each result dict should contain:
+    - url (str): The scanned URL
+    - status (int): HTTP status code
+    - accessible (bool): Whether the endpoint was accessible
+    - findings (List[Dict]): List of security findings, each containing:
+        - type (str): Type of finding
+        - severity (str): Severity level (e.g., 'high', 'medium', 'low')
+        - description (str): Finding description
+        - plugin (str): Plugin that generated the finding
 """
 import json
 import os
@@ -13,13 +23,11 @@ logger = logging.getLogger(__name__)
 
 class ResultManager:
     """Manager for handling scan results.
-
     Provides functionality for saving, loading, and generating reports from scan results.
     """
-
+    
     def __init__(self, output_dir: str = 'results'):
         """Initialize the result manager.
-
         Args:
             output_dir: Directory to store results
         """
@@ -32,26 +40,29 @@ class ResultManager:
 
     def save_results(self, scan_data: Dict, scan_id: Optional[str] = None) -> str:
         """Save scan data dictionary to a JSON file.
-
+        
         Args:
             scan_data: Dictionary containing scan results and metadata
             scan_id: Optional scan ID (generated if not provided)
-
+            
         Returns:
             Path to saved results file
         """
+        # Ensure output directory exists before writing
+        self._ensure_output_dir()
+        
         if scan_id is None:
             scan_id = datetime.now().strftime('%Y%m%d_%H%M%S')
-
+        
         scan_data['scan_id'] = scan_id
         scan_data['timestamp'] = scan_data.get('timestamp', datetime.now().isoformat())
         scan_data['results'] = scan_data.get('results', scan_data.get('endpoints', []))
         scan_data['accessible_count'] = len([r for r in scan_data['results'] if r.get('accessible')])
         scan_data['findings_count'] = sum(len(r.get('findings', [])) for r in scan_data['results'])
-
+        
         filename = f"scan_{scan_id}.json"
         filepath = os.path.join(self.output_dir, filename)
-
+        
         try:
             with open(filepath, 'w') as f:
                 json.dump(scan_data, f, indent=2)
@@ -63,10 +74,10 @@ class ResultManager:
 
     def load_results(self, scan_id: str) -> Optional[Dict]:
         """Load scan results from a file.
-
+        
         Args:
             scan_id: Scan ID or filename to load
-
+            
         Returns:
             Scan data dictionary or None if not found
         """
@@ -75,14 +86,14 @@ class ResultManager:
             filename = f"scan_{scan_id}.json"
         else:
             filename = scan_id
-
+        
         filepath = os.path.join(self.output_dir, filename)
-
+        
         try:
             if not os.path.exists(filepath):
                 logger.error(f"Scan results not found: {filepath}")
                 return None
-
+            
             with open(filepath, 'r') as f:
                 data = json.load(f)
             logger.info(f"Loaded results from {filepath}")
@@ -93,12 +104,12 @@ class ResultManager:
 
     def list_scans(self) -> List[Dict]:
         """List all saved scans.
-
+        
         Returns:
             List of scan metadata dictionaries
         """
         scans = []
-
+        
         try:
             for filename in os.listdir(self.output_dir):
                 if filename.startswith('scan_') and filename.endswith('.json'):
@@ -116,23 +127,23 @@ class ResultManager:
                         logger.warning(f"Failed to read {filename}: {str(e)}")
         except Exception as e:
             logger.error(f"Failed to list scans: {str(e)}")
-
+        
         return sorted(scans, key=lambda x: x.get('timestamp', ''), reverse=True)
 
     def generate_report(self, scan_data: Dict, format: str = 'text') -> str:
         """Generate a human-readable report from results.
-
+        
         Args:
             scan_data: Dict containing all scan results and metadata
             format: Report format ('text' or 'markdown')
-
+            
         Returns:
             Formatted report string
         """
         results = scan_data['results'] if 'results' in scan_data else []
         accessible = [r for r in results if r.get('accessible')]
         with_findings = [r for r in accessible if r.get('findings')]
-
+        
         if format == 'markdown':
             return self._generate_markdown_report(scan_data, results, accessible, with_findings)
         else:
@@ -151,7 +162,7 @@ class ResultManager:
         lines.append(f"Endpoints with findings: {len(with_findings)}")
         lines.append("="*60)
         lines.append("")
-
+        
         if with_findings:
             lines.append("FINDINGS:")
             lines.append("-"*60)
@@ -159,11 +170,12 @@ class ResultManager:
                 lines.append(f"\n[{result['url']}]")
                 lines.append(f"Status: {result['status']}")
                 for finding in result['findings']:
-                    lines.append(f"  - {finding['severity']}: {finding['description']}")
-                    lines.append(f"    Plugin: {finding['plugin']}")
+                    lines.append(f"  - {finding.get('severity', 'unknown')}: {finding.get('description', 'No description')}")
+                    lines.append(f"    Type: {finding.get('type', 'unknown')}")
+                    lines.append(f"    Plugin: {finding.get('plugin', 'unknown')}")
         else:
             lines.append("No security findings detected.")
-
+        
         return "\n".join(lines)
 
     def _generate_markdown_report(self, scan_data, results, accessible, with_findings) -> str:
@@ -178,7 +190,7 @@ class ResultManager:
         lines.append(f"- **Accessible endpoints:** {len(accessible)}")
         lines.append(f"- **Endpoints with findings:** {len(with_findings)}")
         lines.append("")
-
+        
         if with_findings:
             lines.append("## Findings")
             lines.append("")
@@ -186,11 +198,12 @@ class ResultManager:
                 lines.append(f"### {result['url']}")
                 lines.append(f"**Status:** {result['status']}\n")
                 for finding in result['findings']:
-                    lines.append(f"- **{finding['severity']}**: {finding['description']}")
-                    lines.append(f"  - *Plugin:* {finding['plugin']}")
+                    lines.append(f"- **{finding.get('severity', 'unknown')}**: {finding.get('description', 'No description')}")
+                    lines.append(f"  - *Type:* {finding.get('type', 'unknown')}")
+                    lines.append(f"  - *Plugin:* {finding.get('plugin', 'unknown')}")
                 lines.append("")
         else:
             lines.append("## No Findings")
             lines.append("No security findings detected.")
-
+        
         return "\n".join(lines)
