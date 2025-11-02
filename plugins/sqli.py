@@ -129,4 +129,7 @@ def run(response, url):
                             "url": url
                         })
                         return findings
-    return findings
+     return findings
+    except KeyboardInterrupt:
+        print("\n[!] Scan interrupted by user. Partial results will be reported if any.")
+        return findings
