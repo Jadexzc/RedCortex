@@ -78,9 +78,9 @@ def cmd_scan(args):
     config.timeout = args.timeout
     config.user_agent = args.user_agent
     
-    scanner = EndpointScanner(config)
     plugin_manager = PluginManager(config)
     result_manager = ResultManager(config.output_dir)
+    scanner = EndpointScanner(config, plugin_manager)
     
     # Run discovery
     logger.info("Running endpoint discovery...")
@@ -338,3 +338,4 @@ def main():
         sys.exit(1)
 if __name__ == '__main__':
     main()
+
