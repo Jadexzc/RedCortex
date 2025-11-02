@@ -7,13 +7,15 @@ import logging
 import sys
 import os
 from pathlib import Path
-# Import core modules
+
+# Import core modules (use root-based imports assuming CLI runs from repo root)
 from config import Config
 from discovery import EndpointScanner
 from plugin_manager import PluginManager
 from result import ResultManager
 from dashboard import Dashboard
 from shell import interactive_shell
+
 def setup_logging(verbose: bool = False, log_file: str = None):
     """Configure structured logging.
     
@@ -43,6 +45,23 @@ def setup_logging(verbose: bool = False, log_file: str = None):
     # Suppress noisy loggers
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('requests').setLevel(logging.WARNING)
+
+def verify_output_dir_permissions(output_dir: str) -> None:
+    """Verify we can create and write to the output directory.
+    Creates the directory if needed, then attempts to open a temp file.
+    Exits the program with code 1 if permission checks fail.
+    """
+    logger = logging.getLogger(__name__)
+    try:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        test_path = Path(output_dir) / ".perm_check"
+        with open(test_path, 'w') as f:
+            f.write('ok')
+        test_path.unlink(missing_ok=True)
+    except Exception as e:
+        logger.error(f"No write permission to output_dir '{output_dir}': {e}")
+        sys.exit(1)
+
 def load_session(session_file: str) -> dict:
     """Load session state from file.
     
@@ -62,6 +81,7 @@ def load_session(session_file: str) -> dict:
     except json.JSONDecodeError:
         logging.error(f"Invalid session file {session_file}, starting fresh")
         return {}
+
 def cmd_scan(args):
     """Execute a new scan.
     
@@ -78,6 +98,9 @@ def cmd_scan(args):
     config.timeout = args.timeout
     config.user_agent = args.user_agent
     
+    # Ensure output permissions early
+    verify_output_dir_permissions(config.output_dir)
+    
     plugin_manager = PluginManager('plugins')
     result_manager = ResultManager(config.output_dir)
     scanner = EndpointScanner(config, plugin_manager)
@@ -92,15 +115,13 @@ def cmd_scan(args):
     findings = plugin_manager.run_all(endpoints)
     
     # Save results
-    scan_id = result_manager.save_results({
+    scan_file_path = result_manager.save_results({
         'target': args.url,
         'endpoints': endpoints,
         'findings': findings,
-        'timestamp': logging.Formatter().formatTime(logging.LogRecord(
-            '', 0, '', 0, '', (), None))
     })
     
-    logger.info(f"Scan complete! Results saved with ID: {scan_id}")
+    logger.info(f"Scan complete! Results saved to: {scan_file_path}")
     
     # Show summary
     critical = sum(1 for f in findings if f.get('severity') == 'critical')
@@ -116,7 +137,8 @@ def cmd_scan(args):
     print(f"  High: {high}")
     print(f"  Medium: {medium}")
     print(f"  Low: {low}")
-    print(f"\nScan ID: {scan_id}")
+    print(f"\nResults file: {scan_file_path}")
+
 def cmd_resume(args):
     """Resume an existing scan.
     
@@ -136,16 +158,17 @@ def cmd_resume(args):
     
     # Initialize components with saved config
     config = Config(
-        target_url=scan_data['target'],
+        target_url=scan_data.get('target'),
         max_threads=args.threads if hasattr(args, 'threads') else 10,
         timeout=args.timeout if hasattr(args, 'timeout') else 30
     )
     
+    verify_output_dir_permissions(config.output_dir)
     plugin_manager = PluginManager('plugins')
     
     # Resume from where we left off
     remaining_endpoints = [e for e in scan_data['endpoints'] 
-                          if e not in scan_data.get('scanned', [])]
+                           if e not in scan_data.get('scanned', [])]
     
     logger.info(f"Resuming with {len(remaining_endpoints)} remaining endpoints")
     
@@ -153,11 +176,12 @@ def cmd_resume(args):
     new_findings = plugin_manager.run_all(remaining_endpoints)
     
     # Merge and save results
-    scan_data['findings'].extend(new_findings)
+    scan_data['findings'] = scan_data.get('findings', []) + new_findings
     scan_data['scanned'] = scan_data.get('scanned', []) + remaining_endpoints
     result_manager.save_results(scan_data, args.scan_id)
     
     logger.info("Scan resumed and updated")
+
 def cmd_report(args):
     """Generate a report for a scan.
     
@@ -172,19 +196,19 @@ def cmd_report(args):
         logger.error(f"Scan {args.scan_id} not found")
         sys.exit(1)
     
-    # Generate report
-    if args.format == 'markdown':
-        report = result_manager.generate_markdown_report(scan_data)
-    else:
-        report = result_manager.generate_text_report(scan_data)
+    # Generate report using unified API
+    report = result_manager.generate_report(scan_data, 'markdown' if args.format == 'markdown' else 'text')
     
     # Output report
     if args.output:
+        # Ensure output directory for report file
+        Path(os.path.dirname(args.output) or '.').mkdir(parents=True, exist_ok=True)
         with open(args.output, 'w') as f:
             f.write(report)
         logger.info(f"Report saved to {args.output}")
     else:
         print(report)
+
 def cmd_dashboard(args):
     """Start the web dashboard.
     
@@ -197,6 +221,7 @@ def cmd_dashboard(args):
     logger.info(f"Starting dashboard on port {port}")
     dashboard = Dashboard(port=port)
     dashboard.run()
+
 def cmd_list(args):
     """List all available scans.
     
@@ -212,7 +237,8 @@ def cmd_list(args):
     
     print("Available scans:")
     for scan in scans:
-        print(f"  {scan['id']}: {scan['target']} ({scan['timestamp']})")
+        print(f"  {scan.get('scan_id')}: {scan.get('target')} ({scan.get('timestamp')})")
+
 def cmd_shell(args):
     """Launch interactive exploit shell.
     
@@ -244,6 +270,7 @@ def cmd_shell(args):
         session = load_session(args.session)
     
     interactive_shell(results, session)
+
 def create_parser() -> argparse.ArgumentParser:
     """Create and configure argument parser.
     
@@ -305,6 +332,7 @@ def create_parser() -> argparse.ArgumentParser:
                             help='Session file to save/load state')
     
     return parser
+
 def main():
     """Main entry point for RedCortex."""
     parser = create_parser()
@@ -314,7 +342,14 @@ def main():
     state.setdefault("results", [])
     
     # Setup logging
-    setup_logging(verbose=args.verbose, log_file=args.log_file if hasattr(args, 'log_file') else None)
+    setup_logging(verbose=args.verbose, log_file=getattr(args, 'log_file', None))
+
+    # Early permission check for default results directory
+    try:
+        default_output = getattr(Config(), 'output_dir', 'results')
+    except Exception:
+        default_output = 'results'
+    verify_output_dir_permissions(default_output)
     
     # Show help if no command specified
     if not args.command:
@@ -336,8 +371,6 @@ def main():
     else:
         parser.print_help()
         sys.exit(1)
+
 if __name__ == '__main__':
     main()
-
-
-
