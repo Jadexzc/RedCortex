@@ -7,202 +7,349 @@
 ![Version](https://img.shields.io/github/v/release/Jadexzc/RedCortex?style=flat-square)
 
 ## Overview
-RedCortex is a modular, CLI-driven web application security scanner for red team operations and research. It provides targeted vulnerability checks via selectable modules, threaded execution, and flexible runtime controls.
+
+RedCortex is a **modular, CLI-driven web application security scanner** designed for red team operations and security research. The framework has been completely refactored to provide:
+
+- **Modular Architecture**: Separated core functionality into independent modules (config, discovery, plugins, result, dashboard)
+- **Dynamic Plugin System**: Load custom security checks from the `plugins/` directory
+- **Structured Logging**: Comprehensive logging with verbosity controls and file output
+- **Concurrent Scanning**: ThreadPoolExecutor-based endpoint scanning for improved performance
+- **Flexible CLI**: Subcommand-based interface with comprehensive help documentation
+- **Result Management**: Save, load, and generate reports from scan results
+- **Web Dashboard**: Simple web interface to view and analyze scan results
 
 ---
 
 ## Quick Start
 
-- Install dependencies
-  - Python 3.8+
-  - pip install -r requirements.txt 
+### Prerequisites
 
-- Run a scan against a single URL with all modules enabled:
+- Python 3.8+
+- pip install -r requirements.txt
+
+### Basic Scan
+
+Run a basic scan against a target URL:
 
 ```bash
-python RedCortex.py -u https://example.com -m all
+python RedCortex.py scan https://example.com
 ```
 
-- Run specific modules only (comma-separated):
+### Scan with Custom Options
 
 ```bash
-python RedCortex.py --url https://example.com --modules sqli,xss
+python RedCortex.py scan https://example.com \
+  --paths custom_paths.txt \
+  --workers 20 \
+  --timeout 15 \
+  --output report.txt \
+  --verbose
 ```
 
-- Increase verbosity and threads:
+### View Scan Results
 
 ```bash
-python RedCortex.py -u https://example.com -m all -v -t 20
+# List all available scans
+python RedCortex.py list
+
+# Generate report from a specific scan
+python RedCortex.py report <scan_id> --format markdown --output report.md
+
+# Start web dashboard to view results
+python RedCortex.py dashboard --port 8080
+```
+
+---
+
+## Architecture
+
+### Core Modules
+
+```
+RedCortex/
+├── RedCortex.py       # Main CLI entry point with subcommands
+├── config.py          # Configuration management (env vars, config files)
+├── discovery.py       # Endpoint scanning with concurrent execution
+├── plugins.py         # Dynamic plugin loader and manager
+├── result.py          # Result storage, loading, and reporting
+├── dashboard.py       # Web dashboard for result visualization
+├── plugins/           # Plugin directory
+│   ├── __init__.py
+│   └── sensitive_data.py  # Sample plugin
+└── tests/             # Unit tests
+    └── test_plugins.py
 ```
 
 ---
 
 ## Usage
 
+### CLI Commands
+
+RedCortex uses a subcommand-based CLI interface:
+
 ```bash
-python RedCortex.py [-u URL] [-m MODULES] [-o OUTPUT] [-v] [-t THREADS] [--timeout SECONDS] [--user-agent UA]
+python RedCortex.py <subcommand> [options]
 ```
 
-Arguments and options (from RedCortex.py):
-- -u, --url URL
-  - Target URL to scan (required for most runs)
-- -m, --modules MODULES
-  - Comma-separated list of modules to run: sqli, xss, lfi, ssrf, idor, all
-- -o, --output FILE
-  - Write results to specified file
-- -v, --verbose
-  - Enable verbose logging/output
-- -t, --threads N
-  - Number of worker threads (default: 10)
-- --timeout SECONDS
-  - HTTP request timeout (default: 30)
-- --user-agent UA
-  - Custom User-Agent string
+Available subcommands:
+- `scan` - Scan a target URL
+- `resume` - Resume a previous scan
+- `report` - Generate report from scan results
+- `dashboard` - Start web dashboard
+- `list` - List all available scans
 
-Notes:
-- There is no --scan-type, --rate-limit, or --chain-exploits flag in RedCortex.py.
-- Use -m all to execute the full suite.
+Use `--help` with any subcommand for detailed documentation:
 
-Example invocations:
 ```bash
-# Run basic SQLi and XSS checks
-python RedCortex.py -u https://target.tld -m sqli,xss
+python RedCortex.py scan --help
+```
 
-# Run everything with custom UA and timeout
-python RedCortex.py -u https://target.tld -m all --user-agent "RedCortex/1.0" --timeout 45
+### Scan Subcommand
 
-# Save output to a file
-python RedCortex.py -u https://target.tld -m all -o results.json
+Scan a target URL for security vulnerabilities:
+
+```bash
+python RedCortex.py scan TARGET_URL [options]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `-p, --paths FILE` | File containing paths to scan (one per line) |
+| `-t, --timeout SECONDS` | Request timeout in seconds |
+| `-w, --workers N` | Number of concurrent workers |
+| `-o, --output FILE` | Save report to FILE |
+| `--scan-id ID` | Custom scan ID (auto-generated if not provided) |
+| `--plugins-dir DIR` | Directory containing plugins (default: plugins) |
+| `-v, --verbose` | Enable verbose/debug logging |
+| `--log-file FILE` | Write logs to FILE |
+| `--config FILE` | Configuration file path |
+
+**Examples:**
+
+```bash
+# Basic scan
+python RedCortex.py scan https://example.com
+
+# Scan with custom paths
+python RedCortex.py scan https://example.com --paths paths.txt
+
+# Verbose scan with increased concurrency
+python RedCortex.py scan https://example.com --verbose --workers 30
+
+# Save scan with custom ID and output
+python RedCortex.py scan https://example.com --scan-id my_scan --output results.txt
+```
+
+### Report Subcommand
+
+Generate a report from scan results:
+
+```bash
+python RedCortex.py report SCAN_ID [options]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `-f, --format FORMAT` | Report format: `text` or `markdown` (default: text) |
+| `-o, --output FILE` | Save report to FILE (prints to stdout if not specified) |
+
+**Examples:**
+
+```bash
+# Generate text report to stdout
+python RedCortex.py report 20241103_123456
+
+# Generate markdown report to file
+python RedCortex.py report 20241103_123456 --format markdown --output report.md
+```
+
+### Dashboard Subcommand
+
+Start a web dashboard to view scan results:
+
+```bash
+python RedCortex.py dashboard [options]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `-p, --port PORT` | Dashboard port (default: 8080) |
+
+**Example:**
+
+```bash
+python RedCortex.py dashboard --port 8000
+```
+
+Then open http://localhost:8000 in your browser.
+
+### List Subcommand
+
+List all available scans:
+
+```bash
+python RedCortex.py list
 ```
 
 ---
 
-## Module Selection
+## Configuration
 
-Available modules (pass with -m/--modules):
-- sqli: SQL injection probes against query params/forms
-- xss: Reflected XSS payloads and indicator detection
-- lfi: Local File Inclusion path traversal checks
-- ssrf: Server-Side Request Forgery vector attempts
-- idor: Insecure Direct Object Reference access checks
-- all: Run the entire module set above
+### Configuration File
 
-Usage patterns:
+Create a `config.json` file for persistent configuration:
+
+```json
+{
+  "user_agents": [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+  ],
+  "paths": [
+    "/admin",
+    "/api",
+    "/.git",
+    "/.env"
+  ],
+  "timeout": 10,
+  "max_workers": 10,
+  "output_dir": "results",
+  "log_file": "redcortex.log",
+  "dashboard_port": 8080
+}
+```
+
+Use with `--config` flag:
+
 ```bash
-# Single module
-python RedCortex.py -u https://example.com -m sqli
+python RedCortex.py scan https://example.com --config config.json
+```
 
-# Multiple modules (comma-separated)
-python RedCortex.py -u https://example.com -m xss,lfi,idor
+### Environment Variables
 
-# All modules
-python RedCortex.py -u https://example.com -m all
+Override configuration with environment variables:
+
+```bash
+export REDCORTEX_TIMEOUT=15
+export REDCORTEX_MAX_WORKERS=20
+export REDCORTEX_OUTPUT_DIR=/path/to/results
+export REDCORTEX_LOG_FILE=/path/to/redcortex.log
+export REDCORTEX_DASHBOARD_PORT=9000
 ```
 
 ---
 
-## Advanced Options
+## Plugin Development
 
-Tuning and runtime controls:
-- -t, --threads
-  - Controls concurrency level for checks (default: 10)
-- --timeout
-  - Fail slow/blocked requests faster (default: 30s)
-- --user-agent
-  - Identify or blend client traffic
-- -v, --verbose
-  - Show additional progress and diagnostic output
-- -o, --output
-  - Persist results to a file for later analysis
+### Creating a Plugin
 
-Examples:
-```bash
-# Higher concurrency, verbose
-python RedCortex.py -u https://app.local -m all -t 32 -v
-
-# Custom UA and shorter timeout
-python RedCortex.py -u https://app.local -m sqli,xss --user-agent "Mozilla/5.0 RC" --timeout 15
-```
-
----
-
-## API Integration Example
-
-If you want to invoke RedCortex from another Python script, use subprocess to call the CLI with the same arguments exposed by RedCortex.py:
+Plugins are Python modules placed in the `plugins/` directory. Each plugin must implement a `run(response, url)` function:
 
 ```python
-import subprocess
+"""Example plugin for detecting XSS vulnerabilities."""
 
-cmd = [
-    "python", "RedCortex.py",
-    "-u", "https://example.com",
-    "-m", "sqli,xss",
-    "-t", "20",
-    "--timeout", "30",
-    "--user-agent", "RedCortex/1.0",
-    "-o", "results.json",
-]
-
-completed = subprocess.run(cmd, capture_output=True, text=True)
-print(completed.stdout)
-print(completed.stderr)
+def run(response, url):
+    """
+    Check for XSS vulnerabilities.
+    
+    Args:
+        response: HTTP response object
+        url: URL that was scanned
+        
+    Returns:
+        List of findings (empty list if none found)
+    """
+    findings = []
+    
+    # Plugin logic here
+    if "<script>" in response.text:
+        findings.append({
+            'severity': 'HIGH',
+            'description': 'Potential XSS vulnerability detected',
+            'url': url
+        })
+    
+    return findings
 ```
 
-Alternatively, you can package this as a module and expose a Python API that mirrors these options—however, in the current implementation, RedCortex.py is the entrypoint and the CLI is the supported interface.
+### Plugin Structure
+
+Each finding should be a dictionary with:
+
+- `severity`: String ('HIGH', 'MEDIUM', or 'LOW')
+- `description`: String describing the finding
+- `url`: The URL where the finding was discovered
+- Additional optional fields as needed
+
+### Sample Plugin
+
+See `plugins/sensitive_data.py` for a complete example that detects:
+
+- API keys
+- Access tokens
+- Email addresses
+- SSN patterns
+- Credit card patterns
+
+---
+
+## Testing
+
+Run the test suite:
+
+```bash
+# Run all tests
+python -m pytest tests/
+
+# Run with verbose output
+python -m pytest tests/ -v
+
+# Run specific test file
+python tests/test_plugins.py
+```
 
 ---
 
 ## Security and Legal
-Use RedCortex only on targets you have explicit authorization to test. Unauthorized testing may be illegal in your jurisdiction.
 
----
+**IMPORTANT**: RedCortex is designed for authorized security testing only.
 
-## Found a vulnerability?
-Please report it responsibly via our Security Policy (SECURITY.md).
-- Do NOT open public issues for security vulnerabilities
-- Email: security@redcortex-project.org
-- Or use GitHub Security Advisory: https://github.com/Jadexzc/RedCortex/security/advisories/new
+- Only use RedCortex against systems you own or have explicit written permission to test
+- Unauthorized access to computer systems is illegal in most jurisdictions
+- The developers assume no liability for misuse of this tool
+- Review and comply with all applicable laws and regulations
 
 ---
 
 ## License
-This project is licensed under the MIT License (see LICENSE).
 
----
-
-## Citation
-If you use RedCortex in your research, please cite:
-
-```bibtex
-@software{redcortex2025,
-  author = {Jadexzc},
-  title = {RedCortex: Modular Penetration Testing Framework},
-  year = {2025},
-  url = {https://github.com/Jadexzc/RedCortex},
-  version = {1.0.0}
-}
-```
+MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
 ## Acknowledgments
-- Built with Playwright for headless browser automation
-- Integrates dirsearch for directory enumeration
-- Uses SecLists for payload generation
-- Inspired by industry-leading penetration testing frameworks
+
+- Security research community
+- Open source security tools that inspired this project
+- Contributors and testers
 
 ---
 
 ## Support
-- 🐛 Report Bugs: https://github.com/Jadexzc/RedCortex/issues/new?template=bug_report.md
-- ✨ Request Features: https://github.com/Jadexzc/RedCortex/issues/new?template=feature_request.md
-- 💬 Join Discussions: https://github.com/Jadexzc/RedCortex/discussions
-- 📧 Contact: https://github.com/Jadexzc
+
+- **Issues**: Report bugs and request features via [GitHub Issues](https://github.com/Jadexzc/RedCortex/issues)
+- **Discussions**: Ask questions in [GitHub Discussions](https://github.com/Jadexzc/RedCortex/discussions)
+- **Wiki**: Additional documentation in the [Wiki](https://github.com/Jadexzc/RedCortex/wiki)
 
 ---
 
-⚠️ Disclaimer: RedCortex is designed for authorized security testing only. Users are responsible for ensuring they have proper authorization before scanning any target systems. Unauthorized access to computer systems is illegal.
+## Disclaimer
 
-—
-
-Made with ❤️ for the security research community
+This tool is provided "as is" without warranty of any kind. Use at your own risk. Always obtain proper authorization before testing any systems.
