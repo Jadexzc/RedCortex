@@ -1,5 +1,4 @@
 """Dynamic plugin management for RedCortex.
-
 Loads and manages security scanning plugins from the plugins directory.
 """
 import os
@@ -17,6 +16,7 @@ class PluginManager:
     Plugins should be placed in the plugins/ directory and must implement
     a run() method that accepts response and url parameters.
     """
+    
     def __init__(self, plugins_dir: str = 'plugins'):
         """Initialize the plugin manager.
         
@@ -75,6 +75,10 @@ class PluginManager:
         """
         findings = []
         
+        if not self.plugins:
+            logger.warning("No plugins loaded. Run results will be empty.")
+            return findings
+        
         for plugin in self.plugins:
             try:
                 logger.debug(f"Running plugin: {plugin['name']} on {url}")
@@ -91,7 +95,7 @@ class PluginManager:
                         findings.append(finding)
                         
             except Exception as e:
-                logger.error(f"Error running plugin {plugin['name']}: {str(e)}")
+                logger.error(f"Error running plugin {plugin['name']} on {url}: {str(e)}")
         
         return findings
 
