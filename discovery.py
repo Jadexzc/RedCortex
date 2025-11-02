@@ -1,5 +1,4 @@
 """Endpoint discovery module for RedCortex.
-
 Handles scanning endpoints for vulnerabilities and exposures.
 """
 import requests
@@ -8,9 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urljoin, urlparse
 
-
 logger = logging.getLogger(__name__)
-
 
 class EndpointScanner:
     """Scanner for discovering and analyzing endpoints.
@@ -42,6 +39,14 @@ class EndpointScanner:
         })
         return session
     
+    def discover(self):
+        '''
+        Discover endpoints for scanning. Returns a list of endpoint URLs.
+        '''
+        if hasattr(self.config, 'target_url'):
+            return [self.config.target_url]
+        return []
+    
     def scan_endpoint(self, url: str, path: str) -> Dict:
         """Scan a single endpoint.
         
@@ -50,55 +55,41 @@ class EndpointScanner:
             path: Path to append to base URL
             
         Returns:
-            Dictionary with scan results
+            Dictionary containing scan results
         """
         full_url = urljoin(url, path)
+        
         result = {
             'url': full_url,
             'path': path,
-            'status': None,
             'accessible': False,
-            'findings': [],
-            'error': None
+            'status': None,
+            'findings': []
         }
         
         try:
-            logger.debug(f"Scanning endpoint: {full_url}")
-            response = self.session.get(
-                full_url,
-                timeout=self.timeout,
-                allow_redirects=True,
-                verify=False
-            )
-            
+            response = self.session.get(full_url, timeout=self.timeout, allow_redirects=True)
+            result['accessible'] = True
             result['status'] = response.status_code
-            result['accessible'] = response.status_code < 400
             
-            if result['accessible']:
-                logger.info(f"Found accessible endpoint: {full_url} (Status: {response.status_code})")
+            # Run plugins on the response
+            if self.plugin_manager:
+                findings = self.plugin_manager.run_plugins(response, full_url)
+                result['findings'] = findings
                 
-                # Run plugins on accessible endpoints
-                plugin_results = self.plugin_manager.run_plugins(response, full_url)
-                result['findings'].extend(plugin_results)
-            
         except requests.exceptions.Timeout:
-            logger.debug(f"Timeout scanning {full_url}")
-            result['error'] = 'timeout'
-        except requests.exceptions.ConnectionError:
-            logger.debug(f"Connection error for {full_url}")
-            result['error'] = 'connection_error'
-        except Exception as e:
-            logger.error(f"Error scanning {full_url}: {str(e)}")
-            result['error'] = str(e)
+            logger.debug(f"Timeout accessing {full_url}")
+        except requests.exceptions.RequestException as e:
+            logger.debug(f"Error accessing {full_url}: {str(e)}")
         
         return result
     
-    def scan_target(self, target_url: str, paths: Optional[List[str]] = None) -> List[Dict]:
-        """Scan a target URL with multiple paths concurrently.
+    def scan_multiple(self, target_url: str, paths: Optional[List[str]] = None) -> List[Dict]:
+        """Scan multiple endpoints concurrently.
         
         Args:
-            target_url: Base target URL
-            paths: List of paths to scan (uses config default if None)
+            target_url: Base URL to scan
+            paths: List of paths to scan (defaults to config paths if None)
             
         Returns:
             List of scan results
