@@ -9,9 +9,7 @@ import logging
 from typing import List, Dict, Any
 from pathlib import Path
 
-
 logger = logging.getLogger(__name__)
-
 
 class PluginManager:
     """Manager for dynamically loading and executing security plugins.
@@ -19,7 +17,6 @@ class PluginManager:
     Plugins should be placed in the plugins/ directory and must implement
     a run() method that accepts response and url parameters.
     """
-    
     def __init__(self, plugins_dir: str = 'plugins'):
         """Initialize the plugin manager.
         
@@ -97,6 +94,21 @@ class PluginManager:
                 logger.error(f"Error running plugin {plugin['name']}: {str(e)}")
         
         return findings
+
+    def run_all(self, endpoints: List) -> List[Dict[str, Any]]:
+        """
+        Run all plugins for each endpoint result in the endpoints list.
+        Each entry: usually a dict with keys 'url' or simply a URL string.
+        Returns: list of all findings across all endpoints/plugins.
+        """
+        all_findings = []
+        for ep in endpoints:
+            url = ep['url'] if isinstance(ep, dict) and 'url' in ep else ep
+            response = ep.get('response', None) if isinstance(ep, dict) else None
+            findings = self.run_plugins(response, url)
+            if findings:
+                all_findings.extend(findings)
+        return all_findings
     
     def list_plugins(self) -> List[Dict[str, str]]:
         """List all loaded plugins.
