@@ -78,7 +78,7 @@ def cmd_scan(args):
     config.timeout = args.timeout
     config.user_agent = args.user_agent
     
-    plugin_manager = PluginManager(config)
+    plugin_manager = PluginManager('plugins')
     result_manager = ResultManager(config.output_dir)
     scanner = EndpointScanner(config, plugin_manager)
     
@@ -141,7 +141,7 @@ def cmd_resume(args):
         timeout=args.timeout if hasattr(args, 'timeout') else 30
     )
     
-    plugin_manager = PluginManager(config)
+    plugin_manager = PluginManager('plugins')
     
     # Resume from where we left off
     remaining_endpoints = [e for e in scan_data['endpoints'] 
@@ -338,4 +338,5 @@ def main():
         sys.exit(1)
 if __name__ == '__main__':
     main()
+
 
