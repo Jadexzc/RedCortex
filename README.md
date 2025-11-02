@@ -15,7 +15,7 @@ RedCortex is a modular, CLI-driven web application security scanner for red team
 
 - Install dependencies
   - Python 3.8+
-  - pip install -r requirements.txt (if provided)
+  - pip install -r requirements.txt 
 
 - Run a scan against a single URL with all modules enabled:
 
