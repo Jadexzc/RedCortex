@@ -11,7 +11,7 @@ from pathlib import Path
 # Import core modules
 from config import Config
 from discovery import EndpointScanner
-from plugins import PluginManager
+from plugin_manager import PluginManager
 from result import ResultManager
 from dashboard import Dashboard
 from shell import interactive_shell
@@ -351,3 +351,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
