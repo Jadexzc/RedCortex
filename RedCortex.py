@@ -7,7 +7,6 @@ import logging
 import sys
 import os
 from pathlib import Path
-
 # Import core modules
 from config import Config
 from discovery import EndpointScanner
@@ -15,7 +14,6 @@ from plugin_manager import PluginManager
 from result import ResultManager
 from dashboard import Dashboard
 from shell import interactive_shell
-
 def setup_logging(verbose: bool = False, log_file: str = None):
     """Configure structured logging.
     
@@ -45,7 +43,6 @@ def setup_logging(verbose: bool = False, log_file: str = None):
     # Suppress noisy loggers
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('requests').setLevel(logging.WARNING)
-
 def load_session(session_file: str) -> dict:
     """Load session state from file.
     
@@ -65,7 +62,6 @@ def load_session(session_file: str) -> dict:
     except json.JSONDecodeError:
         logging.error(f"Invalid session file {session_file}, starting fresh")
         return {}
-
 def cmd_scan(args):
     """Execute a new scan.
     
@@ -76,12 +72,11 @@ def cmd_scan(args):
     logger.info(f"Starting scan: {args.url}")
     
     # Initialize components
-    config = Config(
-        target_url=args.url,
-        max_threads=args.threads,
-        timeout=args.timeout,
-        user_agent=args.user_agent
-    )
+    config = Config()
+    config.target_url = args.url
+    config.max_workers = args.threads
+    config.timeout = args.timeout
+    config.user_agent = args.user_agent
     
     scanner = EndpointScanner(config)
     plugin_manager = PluginManager(config)
@@ -122,7 +117,6 @@ def cmd_scan(args):
     print(f"  Medium: {medium}")
     print(f"  Low: {low}")
     print(f"\nScan ID: {scan_id}")
-
 def cmd_resume(args):
     """Resume an existing scan.
     
@@ -164,7 +158,6 @@ def cmd_resume(args):
     result_manager.save_results(scan_data, args.scan_id)
     
     logger.info("Scan resumed and updated")
-
 def cmd_report(args):
     """Generate a report for a scan.
     
@@ -192,7 +185,6 @@ def cmd_report(args):
         logger.info(f"Report saved to {args.output}")
     else:
         print(report)
-
 def cmd_dashboard(args):
     """Start the web dashboard.
     
@@ -205,7 +197,6 @@ def cmd_dashboard(args):
     logger.info(f"Starting dashboard on port {port}")
     dashboard = Dashboard(port=port)
     dashboard.run()
-
 def cmd_list(args):
     """List all available scans.
     
@@ -222,7 +213,6 @@ def cmd_list(args):
     print("Available scans:")
     for scan in scans:
         print(f"  {scan['id']}: {scan['target']} ({scan['timestamp']})")
-
 def cmd_shell(args):
     """Launch interactive exploit shell.
     
@@ -254,7 +244,6 @@ def cmd_shell(args):
         session = load_session(args.session)
     
     interactive_shell(results, session)
-
 def create_parser() -> argparse.ArgumentParser:
     """Create and configure argument parser.
     
@@ -316,7 +305,6 @@ def create_parser() -> argparse.ArgumentParser:
                             help='Session file to save/load state')
     
     return parser
-
 def main():
     """Main entry point for RedCortex."""
     parser = create_parser()
@@ -348,7 +336,5 @@ def main():
     else:
         parser.print_help()
         sys.exit(1)
-
 if __name__ == '__main__':
     main()
-
