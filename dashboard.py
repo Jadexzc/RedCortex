@@ -1,34 +1,31 @@
-"""Simple dashboard for viewing RedCortex scan results.
-
-Provides a basic web interface to view and analyze scan results.
 """
+RedCortex Advanced Dashboard for Viewing Scan Results
+Modern interactive web UI with live logo from plugins/logo/RedCortex.txt.
+"""
+
 import json
 import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
-from typing import Optional
-import os
-
+from urllib.parse import urlparse
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+def load_dashboard_logo():
+    logo_path = Path(__file__).parent / "plugins" / "logo" / "RedCortex.txt"
+    try:
+        with open(logo_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return "RedCortex"
 
 class DashboardHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for the dashboard."""
-    
     def __init__(self, *args, result_manager=None, **kwargs):
-        """Initialize handler with result manager.
-        
-        Args:
-            result_manager: ResultManager instance for accessing scan data
-        """
         self.result_manager = result_manager
         super().__init__(*args, **kwargs)
-    
+
     def do_GET(self):
-        """Handle GET requests."""
         parsed_path = urlparse(self.path)
-        
         if parsed_path.path == '/':
             self.serve_index()
         elif parsed_path.path == '/api/scans':
@@ -38,113 +35,122 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.serve_scan_detail(scan_id)
         else:
             self.send_error(404, 'Not Found')
-    
+
     def serve_index(self):
-        """Serve the main dashboard HTML page."""
-        html = '''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>RedCortex Dashboard</title>
-            <style>
-                body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-                .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
-                h1 { color: #d32f2f; }
-                .scan-list { list-style: none; padding: 0; }
-                .scan-item { padding: 15px; margin: 10px 0; background: #fafafa; border-left: 4px solid #d32f2f; cursor: pointer; }
-                .scan-item:hover { background: #f0f0f0; }
-                .findings { color: #d32f2f; font-weight: bold; }
-                .no-findings { color: #4caf50; }
-                #scan-detail { margin-top: 20px; padding: 20px; background: #fafafa; border-radius: 4px; }
-                .finding-item { margin: 10px 0; padding: 10px; background: white; border-left: 4px solid #ff9800; }
-                .severity { font-weight: bold; text-transform: uppercase; }
-                .severity-HIGH { color: #d32f2f; }
-                .severity-MEDIUM { color: #ff9800; }
-                .severity-LOW { color: #ffc107; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>🔴 RedCortex Dashboard</h1>
-                <h2>Recent Scans</h2>
-                <ul class="scan-list" id="scan-list"></ul>
-                <div id="scan-detail" style="display:none;"></div>
-            </div>
-            <script>
-                async function loadScans() {
-                    const response = await fetch('/api/scans');
-                    const scans = await response.json();
-                    const list = document.getElementById('scan-list');
-                    list.innerHTML = scans.map(scan => `
-                        <li class="scan-item" onclick="loadScanDetail('${scan.scan_id}')">
-                            <strong>${scan.target}</strong><br>
-                            <small>${scan.timestamp}</small><br>
-                            ${scan.findings_count > 0 ? 
-                                `<span class="findings">${scan.findings_count} findings</span>` :
-                                '<span class="no-findings">No findings</span>'}
-                        </li>
-                    `).join('');
-                }
-                
-                async function loadScanDetail(scanId) {
-                    const response = await fetch(`/api/scan/${scanId}`);
-                    const scan = await response.json();
-                    const detail = document.getElementById('scan-detail');
-                    const withFindings = scan.results.filter(r => r.accessible && r.findings && r.findings.length > 0);
-                    
-                    detail.style.display = 'block';
-                    detail.innerHTML = `
-                        <h3>Scan Details: ${scan.target}</h3>
-                        <p><strong>Scan ID:</strong> ${scan.scan_id}</p>
-                        <p><strong>Timestamp:</strong> ${scan.timestamp}</p>
-                        <p><strong>Total Scanned:</strong> ${scan.total_scanned}</p>
-                        <p><strong>Accessible:</strong> ${scan.accessible_count}</p>
-                        <p><strong>Findings:</strong> ${scan.findings_count}</p>
-                        <h4>Findings:</h4>
-                        ${withFindings.length > 0 ? withFindings.map(result => `
-                            <div class="finding-item">
-                                <strong>${result.url}</strong> (Status: ${result.status})<br>
-                                ${result.findings.map(f => `
-                                    <div style="margin-top: 10px;">
-                                        <span class="severity severity-${f.severity}">${f.severity}</span>: 
-                                        ${f.description}<br>
-                                        <small>Plugin: ${f.plugin}</small>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        `).join('') : '<p>No findings detected.</p>'}
-                    `;
-                    detail.scrollIntoView({ behavior: 'smooth' });
-                }
-                
-                loadScans();
-            </script>
-        </body>
-        </html>
-        '''
-        
+        logo_html = f"<pre style='font-family:monospace;font-size:18px;color:#d32f2f;'>{load_dashboard_logo()}</pre>"
+        html = f'''<!DOCTYPE html>
+<html>
+<head>
+<title>RedCortex Dashboard</title>
+<style>
+body {{ font-family: Arial, sans-serif; margin: 0; background: #f5f5f5; }}
+.container {{ max-width: 1200px; margin: 20px auto; background: white; padding: 24px; border-radius: 10px; box-shadow: 0 4px 30px #8884; }}
+h1 {{ color: #d32f2f; font-weight: bold; text-align: left; letter-spacing: 2px; }}
+.statbar {{ display: flex; gap: 24px; margin: 18px 0 8px 0; font-size: 16px; }}
+.statbox {{ display:inline; border-radius:6px;padding:6px 16px;font-weight:600;margin-right:10px }}
+.stat-CRITICAL {{ background:#d32f2f; color:white; }}
+.stat-high     {{ background:#ff9800; color:white; }}
+.stat-medium   {{ background:#ffc107; }}
+.stat-low      {{ background:#2196f3; color:white; }}
+#scan-list {{ list-style: none; padding: 0; }}
+.scan-item {{ padding: 15px; margin: 10px 0; background: #fafafa; border-left: 4px solid #d32f2f; cursor:pointer; border-radius: 0 8px 8px 0; }}
+.scan-item:hover {{ background: #f0f0f0; }}
+#scan-detail {{ margin-top:24px; padding:20px; background:#fafafa; border-radius:8px; display:none; }}
+.finding-item {{ border-left: 6px solid #2196f3; margin-bottom: 10px; padding: 12px; background: white; border-radius: 0 8px 8px 0; }}
+.severity-CRITICAL  {{ color:#d32f2f;font-weight:bold; }}
+.severity-high      {{ color:#ff9800;font-weight:bold; }}
+.severity-medium    {{ color:#ffc107;font-weight:bold; }}
+.severity-low       {{ color:#2196f3;font-weight:bold; }}
+.plugin-chip        {{ display:inline-block;padding:1px 8px 2px 8px;margin:0 8px 0 0;background:#ddd;border-radius:10px;font-size:13px }}
+@media(max-width:768px){{ .container{{padding:5px}} }}
+</style>
+</head>
+<body>
+<div class="container">
+{logo_html}
+<h1>RedCortex Dashboard</h1>
+<div id="statblock" class="statbar"></div>
+<section>
+  <h2>Recent Scans</h2>
+  <button onclick="loadScans()">⟳ Reload</button>
+  <ul id="scan-list"></ul>
+</section>
+<div id="scan-detail">
+  <h3>Scan Details</h3>
+  <div id="detail-content"></div>
+  <button onclick="exportDetail()">Export JSON</button>
+</div>
+</div>
+<script>
+let scansCache = [];
+function severityColor(sev){ return {{
+  'CRITICAL':'#d32f2f', 'high':'#ff9800', 'medium':'#ffc107', 'low':'#2196f3'
+}}[sev] || '#666'; }
+async function loadScans() {{
+  let r = await fetch('/api/scans'); let scans = await r.json();
+  scansCache = scans;
+  let counts = {{CRITICAL:0,high:0,medium:0,low:0}};
+  let plugins = {{}};
+  let html = scans.map(scan => {{
+    if(scan.findings_breakdown) for(let k in scan.findings_breakdown) counts[k] = (counts[k]||0)+scan.findings_breakdown[k];
+    if(scan.plugins) scan.plugins.forEach(p=>plugins[p]=(plugins[p]||0)+1);
+    return `<li class="scan-item" onclick="loadScanDetail('${scan.scan_id}')"><strong>${scan.target}</strong>
+    <small>(${scan.timestamp})</small><br>
+    <span>${Object.entries(scan.findings_breakdown||{{}}).map(([k,v])=>`<span class='statbox stat-${k}'>${k}: ${v}</span>`).join('')}</span>
+    </li>`;
+  }}).join('');
+  document.getElementById('scan-list').innerHTML=html;
+  document.getElementById('statblock').innerHTML=Object.entries(counts).map(([k,v])=>`<div class='statbox stat-${k}'>${k}: ${v}</div>`).join(' ');
+}}
+async function loadScanDetail(scanId){{
+  let r=await fetch('/api/scan/'+scanId); let scan=await r.json();
+  document.getElementById('scan-detail').style.display='block';
+  let byPlugin={{}};
+  let html = scan.findings && scan.findings.length?
+    scan.findings.map(f=>
+      `<div class="finding-item">
+        <b style="color:${severityColor(f.severity)}">${f.severity}</b>
+        <span class="plugin-chip">${f.plugin}</span>
+        <b>${f.param||""}</b> <code>${(f.payload||"").slice(0,50)}</code><br>
+        <i>${f.evidence||f.description}</i><br>
+        <small>${f.url||""}</small>
+      </div>`
+    ).join('') : "<p>No findings.</p>";
+  document.getElementById('detail-content').innerHTML=`
+    <b>Scan ID:</b> ${scan.scan_id}<br>
+    <b>Target:</b> ${scan.target}<br>
+    <b>Timestamp:</b> ${scan.timestamp}<br>
+    <b>Total Findings:</b> ${scan.findings.length || 0}<hr>
+    ${html}`;
+}}
+function exportDetail(){{
+  let detail = document.getElementById('detail-content').innerText;
+  let blob = new Blob([JSON.stringify(scansCache,null,2)], {{type:"application/json"}});
+  let a = document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download="RedCortex_scan.json"; a.click();
+}}
+loadScans();
+</script>
+</body>
+</html>
+'''
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
         self.wfile.write(html.encode())
-    
+
     def serve_scans_list(self):
-        """Serve list of scans as JSON."""
         scans = self.result_manager.list_scans()
-        
+        for s in scans:
+            s['findings_breakdown'] = s.get('findings_breakdown', {})
+            s['plugins'] = list(set(f.get('plugin') for f in s.get('findings', [])))
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
         self.end_headers()
         self.wfile.write(json.dumps(scans).encode())
-    
+
     def serve_scan_detail(self, scan_id: str):
-        """Serve detailed scan information as JSON.
-        
-        Args:
-            scan_id: ID of scan to retrieve
-        """
         scan_data = self.result_manager.load_results(scan_id)
-        
         if scan_data:
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
@@ -152,33 +158,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(scan_data).encode())
         else:
             self.send_error(404, 'Scan not found')
-    
+
     def log_message(self, format, *args):
-        """Override to use our logger instead of stderr."""
         logger.debug(f"{self.address_string()} - {format % args}")
 
-
 class Dashboard:
-    """Dashboard server for viewing scan results."""
-    
     def __init__(self, result_manager, port: int = 8080):
-        """Initialize dashboard.
-        
-        Args:
-            result_manager: ResultManager instance
-            port: Port to run dashboard on
-        """
         self.result_manager = result_manager
         self.port = port
         self.server = None
-    
+
     def start(self):
-        """Start the dashboard server."""
-        # Create handler class with result_manager bound
-        handler = lambda *args, **kwargs: DashboardHandler(
-            *args, result_manager=self.result_manager, **kwargs
-        )
-        
+        handler = lambda *args, **kwargs: DashboardHandler(*args, result_manager=self.result_manager, **kwargs)
         try:
             self.server = HTTPServer(('localhost', self.port), handler)
             logger.info(f"Dashboard running at http://localhost:{self.port}")
@@ -191,9 +182,8 @@ class Dashboard:
         except Exception as e:
             logger.error(f"Failed to start dashboard: {str(e)}")
             raise
-    
+
     def stop(self):
-        """Stop the dashboard server."""
         if self.server:
             self.server.shutdown()
             logger.info("Dashboard stopped")
