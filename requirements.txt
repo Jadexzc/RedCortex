@@ -1,3 +1,10 @@
+# Installation instructions:
+# First, run: pip install requests pyjwt
+#
+# If the above fails, try:
+# pip install --upgrade pip setuptools wheel
+# pip install requests pyjwt
+
 flask
 playwright
 requests
