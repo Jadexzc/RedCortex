@@ -1,5 +1,5 @@
 """
-RedCortex Plugin: ULTIMATE SQLi (wordlists, DBMS auto, blind, proxy, POST/GET, Telegram, session log)
+RedCortex Plugin: SQLi (wordlists, DBMS auto, blind, proxy, POST/GET, Telegram, session log)
 Drop-in, no hardcoded params/DB strings; everything from ./wordlists.
 """
 
