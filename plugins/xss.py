@@ -79,7 +79,10 @@ TAMPERS = [
     lambda x: x.replace("s", "\\x73").replace("c", "\\x63"),
 ]
 
-DOM_SINKS = re.compile(r"(document\.write|innerHTML|outerHTML|insertAdjacentHTML|eval\(|Function\(|setTimeout\(|location\.|src\s*=|href\s*=|on[a-z]+\s*=)", re.I)
+DOM_SINKS = re.compile(
+    r"(document\.write|innerHTML|outerHTML|insertAdjacentHTML|eval\(|Function\(|setTimeout\(|location\.|src\s*=|href\s*=|on[a-z]+\s*=)",
+    re.I,
+)
 
 @dataclasses.dataclass
 class Finding:
@@ -347,4 +350,26 @@ async def generate_report(result: Dict[str, Any], fmt: str = "json") -> str:
     # Basic HTML rendering
     parts = [
         "<html><head><meta charset='utf-8'><title>XSS Report</title>",
-        "<style>body{font-family:system-ui} .sev{padding:
+        "<style>body{font-family:system-ui} .sev{padding:8px;}</style></head><body>",
+        f"<h1>XSS Scan Report</h1>",
+        f"<h2>Targets: {', '.join(result.get('summary', {}).get('targets', []))}</h2>",
+        "<h3>Summary</h3>",
+        "<ul>",
+        f"<li>Reflected: {result.get('summary', {}).get('counts', {}).get('reflected', 0)}</li>",
+        f"<li>Stored: {result.get('summary', {}).get('counts', {}).get('stored', 0)}</li>",
+        f"<li>DOM: {result.get('summary', {}).get('counts', {}).get('dom', 0)}</li>",
+        "</ul>",
+        "<h3>Detailed Findings</h3>",
+        "<table border='1' cellspacing='0' cellpadding='5'>",
+        "<thead><tr><th>Target</th><th>Vector</th><th>Parameter</th><th>Payload</th><th>Context</th><th>Evidence</th></tr></thead>",
+        "<tbody>",
+    ]
+    for f in result.get("findings", []):
+        parts.append(
+            f"<tr><td>{html.escape(f['target'])}</td><td>{html.escape(f['vector'])}</td>"
+            f"<td>{html.escape(str(f['param']) if f['param'] else '')}</td>"
+            f"<td>{html.escape(f['payload'])}</td><td>{html.escape(f['context'])}</td>"
+            f"<td>{html.escape(f['evidence'])}</td></tr>"
+        )
+    parts.append("</tbody></table></body></html>")
+    return ''.join(parts)
