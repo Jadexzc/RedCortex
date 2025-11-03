@@ -1,344 +1,172 @@
 #!/usr/bin/env python3
-"""RedCortex - Modular Red Team Web Pentest Framework.
-Refactored version with improved modularity, logging, and CLI interface.
 """
-import argparse
-import logging
+RedCortex - Modular Red Team Web Pentest Framework (Python 3.8+)
+Refactored for advanced plugin selection, logging, reporting, and user experience.
+
+Usage:
+  python RedCortex.py scan <url> [--plugins xss,sqli,lfi,...] [--output result.json]
+  python RedCortex.py list
+  python RedCortex.py report <scan_id> [--format json|csv|html] [--output file]
+  python RedCortex.py dashboard [--port 8080]
+  python RedCortex.py shell <scan_id>
+  python RedCortex.py --help
+  python RedCortex.py --version
+
+Available Plugins:
+  xss, sqli, lfi, rce, ssrf, cors, sensitive_data, open_redirect, xxe, jwk_weak
+
+Examples:
+  python RedCortex.py scan https://example.com --plugins xss,sqli
+  python RedCortex.py report 20251103-001 --format json --output findings.json
+  python RedCortex.py dashboard --port 9090
+"""
+
 import sys
 import os
+import argparse
+import logging
 from pathlib import Path
-# Import core modules
+
+# External packages required: colorama (for CLI colors)
+try:
+    from colorama import init as colorama_init, Fore, Style
+    colorama_init(autoreset=True)
+except ImportError:
+    Fore = Style = lambda x: ''
+    def colorama_init(): pass
+
+# Core modules
 from config import Config
 from discovery import EndpointScanner
 from plugin_manager import PluginManager
 from result import ResultManager
 from dashboard import Dashboard
 from shell import interactive_shell
-def setup_logging(verbose: bool = False, log_file: str = None):
-    """Configure structured logging.
-    
-    Args:
-        verbose: Enable verbose/debug logging
-        log_file: Path to log file (optional)
-    """
+
+def load_logo():
+    logo_path = Path(__file__).parent / "plugins" / "logo" / "RedCortex.txt"
+    try:
+        with open(logo_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return "RedCortex"
+
+def setup_logging(verbose=False, log_file=None):
     log_level = logging.DEBUG if verbose else logging.INFO
-    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    
-    # Console handler
+    log_format = '%(asctime)s - %(levelname)s - %(message)s'
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
     console_handler.setFormatter(logging.Formatter(log_format))
-    
     handlers = [console_handler]
-    
-    # File handler if specified
     if log_file:
         file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(logging.DEBUG)
+        file_handler.setLevel(log_level)
         file_handler.setFormatter(logging.Formatter(log_format))
         handlers.append(file_handler)
-    
     logging.basicConfig(level=log_level, handlers=handlers)
-    
-    # Suppress noisy loggers
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
-    logging.getLogger('requests').setLevel(logging.WARNING)
-def load_session(session_file: str) -> dict:
-    """Load session state from file.
-    
-    Args:
-        session_file: Path to session file
-        
-    Returns:
-        Session state dictionary
-    """
-    import json
-    try:
-        with open(session_file, 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        logging.warning(f"Session file {session_file} not found, starting fresh")
-        return {}
-    except json.JSONDecodeError:
-        logging.error(f"Invalid session file {session_file}, starting fresh")
-        return {}
-def cmd_scan(args):
-    """Execute a new scan.
-    
-    Args:
-        args: Parsed command-line arguments
-    """
-    logger = logging.getLogger(__name__)
-    logger.info(f"Starting scan: {args.url}")
-    
-    # Initialize components
-    config = Config()
-    config.target_url = args.url
-    config.max_workers = args.threads
-    config.timeout = args.timeout
-    config.user_agent = args.user_agent
-    
-    plugin_manager = PluginManager('plugins')
-    result_manager = ResultManager(config.output_dir)
-    scanner = EndpointScanner(config, plugin_manager)
-    
-    # Run discovery
-    logger.info("Running endpoint discovery...")
-    endpoints = scanner.scan_target()
-    logger.info(f"Found {len(endpoints)} endpoints")
-    
-    # Run plugins
-    logger.info("Running security tests...")
-    findings = plugin_manager.run_all(endpoints)
-    
-    # Save results
-    scan_id = result_manager.save_results({
-        'target': args.url,
-        'endpoints': endpoints,
-        'findings': findings,
-        'timestamp': logging.Formatter().formatTime(logging.LogRecord(
-            '', 0, '', 0, '', (), None))
-    })
-    
-    logger.info(f"Scan complete! Results saved with ID: {scan_id}")
-    
-    # Show summary
-    critical = sum(1 for f in findings if f.get('severity') == 'critical')
-    high = sum(1 for f in findings if f.get('severity') == 'high')
-    medium = sum(1 for f in findings if f.get('severity') == 'medium')
-    low = sum(1 for f in findings if f.get('severity') == 'low')
-    
-    print("\n=== Scan Summary ===")
-    print(f"Target: {args.url}")
-    print(f"Endpoints: {len(endpoints)}")
-    print(f"Findings: {len(findings)}")
-    print(f"  Critical: {critical}")
-    print(f"  High: {high}")
-    print(f"  Medium: {medium}")
-    print(f"  Low: {low}")
-    print(f"\nScan ID: {scan_id}")
-def cmd_resume(args):
-    """Resume an existing scan.
-    
-    Args:
-        args: Parsed command-line arguments
-    """
-    logger = logging.getLogger(__name__)
-    logger.info(f"Resuming scan: {args.scan_id}")
-    
-    # Load scan data
-    result_manager = ResultManager()
-    scan_data = result_manager.load_results(args.scan_id)
-    
-    if not scan_data:
-        logger.error(f"Scan {args.scan_id} not found")
-        sys.exit(1)
-    
-    # Initialize components with saved config
-    config = Config(
-        target_url=scan_data['target'],
-        max_threads=args.threads if hasattr(args, 'threads') else 10,
-        timeout=args.timeout if hasattr(args, 'timeout') else 30
-    )
-    
-    plugin_manager = PluginManager('plugins')
-    
-    # Resume from where we left off
-    remaining_endpoints = [e for e in scan_data['endpoints'] 
-                          if e not in scan_data.get('scanned', [])]
-    
-    logger.info(f"Resuming with {len(remaining_endpoints)} remaining endpoints")
-    
-    # Run plugins on remaining endpoints
-    new_findings = plugin_manager.run_all(remaining_endpoints)
-    
-    # Merge and save results
-    scan_data['findings'].extend(new_findings)
-    scan_data['scanned'] = scan_data.get('scanned', []) + remaining_endpoints
-    result_manager.save_results(scan_data, args.scan_id)
-    
-    logger.info("Scan resumed and updated")
-def cmd_report(args):
-    """Generate a report for a scan.
-    
-    Args:
-        args: Parsed command-line arguments
-    """
-    logger = logging.getLogger(__name__)
-    result_manager = ResultManager()
-    scan_data = result_manager.load_results(args.scan_id)
-    
-    if not scan_data:
-        logger.error(f"Scan {args.scan_id} not found")
-        sys.exit(1)
-    
-    # Generate report
-    if args.format == 'markdown':
-        report = result_manager.generate_markdown_report(scan_data)
-    else:
-        report = result_manager.generate_text_report(scan_data)
-    
-    # Output report
-    if args.output:
-        with open(args.output, 'w') as f:
-            f.write(report)
-        logger.info(f"Report saved to {args.output}")
-    else:
-        print(report)
-def cmd_dashboard(args):
-    """Start the web dashboard.
-    
-    Args:
-        args: Parsed command-line arguments
-    """
-    logger = logging.getLogger(__name__)
-    port = args.port if hasattr(args, 'port') and args.port else 8080
-    
-    logger.info(f"Starting dashboard on port {port}")
-    dashboard = Dashboard(port=port)
-    dashboard.run()
-def cmd_list(args):
-    """List all available scans.
-    
-    Args:
-        args: Parsed command-line arguments
-    """
-    result_manager = ResultManager()
-    scans = result_manager.list_scans()
-    
-    if not scans:
-        print("No scans found")
-        return
-    
-    print("Available scans:")
-    for scan in scans:
-        print(f"  {scan['id']}: {scan['target']} ({scan['timestamp']})")
-def cmd_shell(args):
-    """Launch interactive exploit shell.
-    
-    Args:
-        args: Parsed command-line arguments
-    """
-    logger = logging.getLogger(__name__)
-    logger.info(f"Loading scan results: {args.scan_id}")
-    
-    # Load scan data
-    result_manager = ResultManager()
-    scan_data = result_manager.load_results(args.scan_id)
-    
-    if not scan_data:
-        logger.error(f"Scan {args.scan_id} not found")
-        sys.exit(1)
-    
-    # Extract findings as results for shell
-    results = []
-    for finding in scan_data.get('findings', []):
-        vuln_type = finding.get('type', 'Unknown')
-        url = finding.get('url', '')
-        param = finding.get('param', '')
-        results.append((vuln_type, url, param))
-    
-    # Launch interactive shell
-    session = {}
-    if hasattr(args, 'session') and args.session:
-        session = load_session(args.session)
-    
-    interactive_shell(results, session)
-def create_parser() -> argparse.ArgumentParser:
-    """Create and configure argument parser.
-    
-    Returns:
-        Configured argument parser
-    """
-    parser = argparse.ArgumentParser(
-        description='RedCortex - Modular Red Team Web Pentest Framework',
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    
-    parser.add_argument('-v', '--verbose', action='store_true',
-                       help='Enable verbose output')
-    parser.add_argument('--log-file', metavar='FILE',
-                       help='Write logs to FILE')
-    
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
-    
-    # Scan subcommand
-    scan_parser = subparsers.add_parser('scan', help='Start a new scan')
-    scan_parser.add_argument('url', help='Target URL to scan')
-    scan_parser.add_argument('-t', '--threads', type=int, default=10,
-                            help='Number of concurrent threads (default: 10)')
-    scan_parser.add_argument('--timeout', type=int, default=30,
-                            help='Request timeout in seconds (default: 30)')
-    scan_parser.add_argument('--user-agent', metavar='UA',
-                            help='Custom user agent string')
-    scan_parser.add_argument('-s', '--session', metavar='FILE',
-                            help='Session file to save/load state')
-    
-    # Resume subcommand
-    resume_parser = subparsers.add_parser('resume', help='Resume an existing scan')
-    resume_parser.add_argument('scan_id', help='Scan ID to resume')
-    resume_parser.add_argument('-t', '--threads', type=int,
-                              help='Override thread count')
-    resume_parser.add_argument('--timeout', type=int,
-                              help='Override timeout')
-    
-    # Report subcommand
-    report_parser = subparsers.add_parser('report', help='Generate a scan report')
-    report_parser.add_argument('scan_id', help='Scan ID to generate report for')
-    report_parser.add_argument('-f', '--format', choices=['text', 'markdown'],
-                             default='text', help='Report format (default: text)')
-    report_parser.add_argument('-o', '--output', metavar='FILE',
-                             help='Save report to FILE (prints to stdout if not specified)')
-    
-    # Dashboard subcommand
-    dashboard_parser = subparsers.add_parser('dashboard', help='Start web dashboard')
-    dashboard_parser.add_argument('-p', '--port', type=int, metavar='PORT',
-                                help='Dashboard port (default: 8080)')
-    
-    # List subcommand
-    list_parser = subparsers.add_parser('list', help='List all available scans')
-    
-    # Shell subcommand
-    shell_parser = subparsers.add_parser('shell', help='Launch interactive exploit shell')
-    shell_parser.add_argument('scan_id', help='Scan ID to load results from')
-    shell_parser.add_argument('-s', '--session', metavar='FILE',
-                            help='Session file to save/load state')
-    
-    return parser
+
+def color_sev(sev):
+    if sev.lower() in ('critical', 'high'):
+        return f"{Fore.RED}{sev}{Style.RESET_ALL}"
+    elif sev.lower() == 'medium':
+        return f"{Fore.YELLOW}{sev}{Style.RESET_ALL}"
+    elif sev.lower() == 'low':
+        return f"{Fore.BLUE}{sev}{Style.RESET_ALL}"
+    return sev
+
 def main():
-    """Main entry point for RedCortex."""
-    parser = create_parser()
+    print(load_logo())  
+
+    parser = argparse.ArgumentParser(
+        prog="RedCortex",
+        description="RedCortex - Modular Red Team Web Pentest Framework (Python 3.8+)",
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog="""
+Plugins: xss, sqli, lfi, rce, ssrf, cors, sensitive_data, open_redirect, xxe, jwk_weak
+
+Examples:
+  python RedCortex.py scan https://target --plugins xss,sqli
+  python RedCortex.py report <scan_id> --format json --output findings.json
+  python RedCortex.py dashboard --port 9090
+        """
+    )
+    parser.add_argument('--version', action='version', version='RedCortex v1.0.0')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose logging')
+    parser.add_argument('--log-file', help='Path to log file')
+    subparsers = parser.add_subparsers(dest='subcommand', required=True, help='Subcommand to run')
+
+    # scan command
+    scan_parser = subparsers.add_parser('scan', help='Run advanced web vulnerability scan')
+    scan_parser.add_argument('target_url', help='Target URL to scan')
+    scan_parser.add_argument('--plugins', help='Comma-separated plugins to use (default: all)')
+    scan_parser.add_argument('--threads', type=int, default=10, help='Number of concurrent threads')
+    scan_parser.add_argument('--output', help='Write results to JSON file')
+
+    # list command
+    list_parser = subparsers.add_parser('list', help='List available scans')
+
+    # report command
+    report_parser = subparsers.add_parser('report', help='Generate scan report')
+    report_parser.add_argument('scan_id', help='Scan session ID')
+    report_parser.add_argument('--format', choices=['json', 'csv', 'html'], default='json', help='Report format')
+    report_parser.add_argument('--output', help='Output file for report')
+
+    # dashboard command
+    dash_parser = subparsers.add_parser('dashboard', help='Start web dashboard')
+    dash_parser.add_argument('--port', type=int, default=8080, help='Dashboard port')
+
+    # shell command
+    shell_parser = subparsers.add_parser('shell', help='Launch interactive exploit shell')
+    shell_parser.add_argument('scan_id', help='Scan session ID')
+    shell_parser.add_argument('--session', help='Session file for command history')
+
     args = parser.parse_args()
-    state = load_session(args.session) if hasattr(args, 'session') and args.session else {}
-    state.setdefault("chain", [])
-    state.setdefault("results", [])
-    
-    # Setup logging
-    setup_logging(verbose=args.verbose, log_file=args.log_file if hasattr(args, 'log_file') else None)
-    
-    # Show help if no command specified
-    if not args.command:
-        parser.print_help()
-        sys.exit(1)
-    
-    # Execute command
-    commands = {
-        'scan': cmd_scan,
-        'resume': cmd_resume,
-        'report': cmd_report,
-        'dashboard': cmd_dashboard,
-        'list': cmd_list,
-        'shell': cmd_shell
-    }
-    
-    if args.command in commands:
-        commands[args.command](args)
+    setup_logging(args.verbose, args.log_file)
+
+    if args.subcommand == 'scan':
+        logging.info(f"Starting scan on {args.target_url}")
+        plugins = args.plugins.split(',') if args.plugins else PluginManager.list_plugins()
+        scanner = EndpointScanner(args.target_url, plugins, threads=args.threads)
+        scan_result = scanner.run()
+        # Save results if requested
+        if args.output:
+            with open(args.output, 'w') as f:
+                import json
+                json.dump(scan_result, f, indent=2)
+            print(f"{Fore.GREEN}Results saved to {args.output}{Style.RESET_ALL}")
+        # Summary output
+        counts = {}
+        for finding in scan_result:
+            sev = finding.get("severity", "info")
+            counts[sev] = counts.get(sev, 0) + 1
+        for sev, cnt in counts.items():
+            print(f"{color_sev(sev)} findings: {cnt}")
+        if counts.get("critical", 0): print(f"{Fore.RED}CRITICAL issues found!{Style.RESET_ALL}")
+
+    elif args.subcommand == 'list':
+        scans = ResultManager.list_scans()
+        print("Available scans:", scans)
+
+    elif args.subcommand == 'report':
+        report = ResultManager.generate_report(args.scan_id, fmt=args.format)
+        if args.output:
+            with open(args.output, 'w') as f:
+                f.write(report)
+            print(f"{Fore.GREEN}Report saved to {args.output}{Style.RESET_ALL}")
+        else:
+            print(report)
+
+    elif args.subcommand == 'dashboard':
+        Dashboard.run(port=args.port)
+
+    elif args.subcommand == 'shell':
+        interactive_shell(args.scan_id, session_file=args.session)
+
     else:
         parser.print_help()
+
+if __name__ == "__main__":
+    if sys.version_info < (3, 8):
+        print("RedCortex requires Python 3.8 or newer.", file=sys.stderr)
         sys.exit(1)
-if __name__ == '__main__':
     main()
-
-
-
-
