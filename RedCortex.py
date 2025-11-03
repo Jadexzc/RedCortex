@@ -125,8 +125,8 @@ Examples:
 
     if args.subcommand == 'scan':
         logging.info(f"Starting scan on {args.target_url}")
-        plugins = args.plugins.split(',') if args.plugins else PluginManager.list_plugins()
-        scanner = EndpointScanner(args.target_url, plugins, threads=args.threads)
+        plugin_manager = PluginManager()
+        plugins = args.plugins.split(',') if args.plugins else [p['name'] for p in plugin_manager.list_plugins()]        scanner = EndpointScanner(args.target_url, plugins, threads=args.threads)
         scan_result = scanner.run()
         # Save results if requested
         if args.output:
@@ -170,3 +170,4 @@ if __name__ == "__main__":
         print("RedCortex requires Python 3.8 or newer.", file=sys.stderr)
         sys.exit(1)
     main()
+
