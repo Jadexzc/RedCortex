@@ -1,1 +1,164 @@
-"""Endpoint discovery and scanning module for RedCortex. Performs concurrent and adaptive endpoint analysis.\n"""\nimport requests\nimport logging\nfrom typing import Dict, List, Optional\nfrom concurrent.futures import ThreadPoolExecutor, as_completed\nfrom urllib.parse import urljoin, urlparse\n\nlogger = logging.getLogger(__name__)\n\n\nclass EndpointScanner:\n    """\n    Discovers and scans endpoints for vulnerabilities.\n    Handles multi-path brute-forcing, session setup, and response analysis.\n    """\n    \n    def __init__(self, target_url: str, threads: int = 10, \n                 paths: Optional[List[str]] = None, timeout: int = 8):\n        """\n        Initialize the EndpointScanner.\n        \n        Args:\n            target_url: Base URL to scan\n            threads: Number of concurrent workers\n            paths: List of paths to scan (defaults to ['/'])\n            timeout: Request timeout in seconds\n        """\n        self.target_url = target_url\n        self.paths = paths or ['/']\n        self.threads = threads\n        self.timeout = timeout\n        self.session = requests.Session()\n        self.session.headers.update({\n            \"User-Agent\": \"RedCortex/1.0\",\n            \"Accept\": \"*/*\"\n        })\n        \n    def scan_endpoint(self, url: str, path: str) -> Dict:\n        """\n        Scan a single endpoint and return results.\n        \n        Args:\n            url: Base URL\n            path: Path to append to base URL\n            \n        Returns:\n            Dictionary containing scan results\n        """\n        full_url = urljoin(url, path)\n        result = {\n            'url': full_url,\n            'path': path,\n            'accessible': False,\n            'status': None,\n            'headers': {},\n            'content_type': None,\n            'content_length': 0,\n            'redirect_url': None\n        }\n        \n        try:\n            response = self.session.get(\n                full_url, \n                timeout=self.timeout, \n                allow_redirects=True,\n                verify=True\n            )\n            \n            result['accessible'] = True\n            result['status'] = response.status_code\n            result['headers'] = dict(response.headers)\n            result['content_type'] = response.headers.get('Content-Type', '')\n            result['content_length'] = len(response.content)\n            \n            # Track redirects\n            if response.history:\n                result['redirect_url'] = response.url\n                \n            # Log successful access\n            logger.info(f\"Endpoint {full_url} - Status: {response.status_code}\")\n            \n        except requests.exceptions.Timeout:\n            logger.debug(f\"Timeout accessing {full_url}\")\n            result['error'] = 'timeout'\n            \n        except requests.exceptions.SSLError as e:\n            logger.debug(f\"SSL error accessing {full_url}: {str(e)}\")\n            result['error'] = 'ssl_error'\n            \n        except requests.exceptions.ConnectionError as e:\n            logger.debug(f\"Connection error accessing {full_url}: {str(e)}\")\n            result['error'] = 'connection_error'\n            \n        except requests.exceptions.RequestException as e:\n            logger.debug(f\"Error accessing {full_url}: {str(e)}\")\n            result['error'] = str(e)\n            \n        return result\n    \n    def scan_multiple(self) -> List[Dict]:\n        """\n        Scan multiple endpoints concurrently.\n        \n        Returns:\n            List of scan results for all paths\n        """\n        logger.info(\n            f\"Scanning {self.target_url} with {len(self.paths)} paths \"\n            f\"using {self.threads} workers\"\n        )\n        \n        results = []\n        \n        with ThreadPoolExecutor(max_workers=self.threads) as executor:\n            future_to_path = {\n                executor.submit(self.scan_endpoint, self.target_url, path): path\n                for path in self.paths\n            }\n            \n            for future in as_completed(future_to_path):\n                path = future_to_path[future]\n                try:\n                    result = future.result()\n                    results.append(result)\n                    \n                except Exception as e:\n                    logger.error(f\"Failed to scan {path}: {str(e)}\")\n                    results.append({\n                        'url': urljoin(self.target_url, path),\n                        'path': path,\n                        'accessible': False,\n                        'status': None,\n                        'error': f\"scan_failed: {str(e)}\"\n                    })\n        \n        accessible_count = len([r for r in results if r['accessible']])\n        logger.info(\n            f\"Scan complete. {accessible_count}/{len(results)} \"\n            f\"accessible endpoints found.\"\n        )\n        \n        return results\n    \n    def get_accessible_endpoints(self, results: List[Dict]) -> List[Dict]:\n        """\n        Filter results to only accessible endpoints.\n        \n        Args:\n            results: List of scan results\n            \n        Returns:\n            List of accessible endpoints\n        """\n        return [r for r in results if r.get('accessible', False)]\n    \n    def close(self):\n        """Close the session and cleanup resources."""\n        if self.session:\n            self.session.close()\n            logger.debug(\"Scanner session closed\")\n
+"""Endpoint discovery and scanning module for RedCortex.
+
+Performs concurrent and adaptive endpoint analysis.
+"""
+import requests
+import logging
+from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urljoin, urlparse
+
+logger = logging.getLogger(__name__)
+
+
+class EndpointScanner:
+    """
+    Discovers and scans endpoints for vulnerabilities.
+    
+    Handles multi-path brute-forcing, session setup, and response analysis.
+    """
+    
+    def __init__(self, target_url: str, threads: int = 10, 
+                 paths: Optional[List[str]] = None, timeout: int = 8):
+        """
+        Initialize the EndpointScanner.
+        
+        Args:
+            target_url: Base URL to scan
+            threads: Number of concurrent workers
+            paths: List of paths to scan (defaults to ['/'])
+            timeout: Request timeout in seconds
+        """
+        self.target_url = target_url
+        self.paths = paths or ['/']
+        self.threads = threads
+        self.timeout = timeout
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "RedCortex/1.0",
+            "Accept": "*/*"
+        })
+        
+    def scan_endpoint(self, url: str, path: str) -> Dict:
+        """
+        Scan a single endpoint and return results.
+        
+        Args:
+            url: Base URL
+            path: Path to append to base URL
+            
+        Returns:
+            Dictionary containing scan results
+        """
+        full_url = urljoin(url, path)
+        result = {
+            'url': full_url,
+            'path': path,
+            'accessible': False,
+            'status': None,
+            'headers': {},
+            'content_type': None,
+            'content_length': 0,
+            'redirect_url': None
+        }
+        
+        try:
+            response = self.session.get(
+                full_url, 
+                timeout=self.timeout, 
+                allow_redirects=True,
+                verify=True
+            )
+            
+            result['accessible'] = True
+            result['status'] = response.status_code
+            result['headers'] = dict(response.headers)
+            result['content_type'] = response.headers.get('Content-Type', '')
+            result['content_length'] = len(response.content)
+            
+            # Track redirects
+            if response.history:
+                result['redirect_url'] = response.url
+                
+            # Log successful access
+            logger.info(f"Endpoint {full_url} - Status: {response.status_code}")
+            
+        except requests.exceptions.Timeout:
+            logger.debug(f"Timeout accessing {full_url}")
+            result['error'] = 'timeout'
+            
+        except requests.exceptions.SSLError as e:
+            logger.debug(f"SSL error accessing {full_url}: {str(e)}")
+            result['error'] = 'ssl_error'
+            
+        except requests.exceptions.ConnectionError as e:
+            logger.debug(f"Connection error accessing {full_url}: {str(e)}")
+            result['error'] = 'connection_error'
+            
+        except requests.exceptions.RequestException as e:
+            logger.debug(f"Error accessing {full_url}: {str(e)}")
+            result['error'] = str(e)
+            
+        return result
+    
+    def scan_multiple(self) -> List[Dict]:
+        """
+        Scan multiple endpoints concurrently.
+        
+        Returns:
+            List of scan results for all paths
+        """
+        logger.info(
+            f"Scanning {self.target_url} with {len(self.paths)} paths "
+            f"using {self.threads} workers"
+        )
+        
+        results = []
+        
+        with ThreadPoolExecutor(max_workers=self.threads) as executor:
+            future_to_path = {
+                executor.submit(self.scan_endpoint, self.target_url, path): path
+                for path in self.paths
+            }
+            
+            for future in as_completed(future_to_path):
+                path = future_to_path[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                    
+                except Exception as e:
+                    logger.error(f"Failed to scan {path}: {str(e)}")
+                    results.append({
+                        'url': urljoin(self.target_url, path),
+                        'path': path,
+                        'accessible': False,
+                        'status': None,
+                        'error': f"scan_failed: {str(e)}"
+                    })
+        
+        accessible_count = len([r for r in results if r['accessible']])
+        logger.info(
+            f"Scan complete. {accessible_count}/{len(results)} "
+            f"accessible endpoints found."
+        )
+        
+        return results
+    
+    def get_accessible_endpoints(self, results: List[Dict]) -> List[Dict]:
+        """
+        Filter results to only accessible endpoints.
+        
+        Args:
+            results: List of scan results
+            
+        Returns:
+            List of accessible endpoints
+        """
+        return [r for r in results if r.get('accessible', False)]
+    
+    def close(self):
+        """Close the session and cleanup resources."""
+        if self.session:
+            self.session.close()
+            logger.debug("Scanner session closed")
