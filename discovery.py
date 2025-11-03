@@ -34,3 +34,33 @@ class EndpointScanner:
         self.threads = threads
         self.timeout = timeout
         self.session = requests.Session()
+    
+    def scan_multiple(self) -> List[Dict]:
+        """
+        Scan multiple endpoints with all loaded plugins.
+        
+        Returns:
+            List of scan results from all plugins
+        """
+        results = []
+        logger.info(f"Starting scan on {self.target_url} with {len(self.paths)} path(s)")
+        
+        for path in self.paths:
+            endpoint = urljoin(self.target_url, path)
+            logger.info(f"Scanning endpoint: {endpoint}")
+            
+            # Run all plugins against this endpoint
+            plugin_results = self.plugin_manager.run_plugins(endpoint, self.session)
+            results.extend(plugin_results)
+        
+        logger.info(f"Scan completed. Found {len(results)} result(s)")
+        return results
+    
+    def run(self) -> List[Dict]:
+        """
+        Run the scanner (alias for scan_multiple for backwards compatibility).
+        
+        Returns:
+            List of scan results from all plugins
+        """
+        return self.scan_multiple()
