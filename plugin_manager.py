@@ -1,1 +1,150 @@
-"""\nDynamic plugin management for RedCortex.\nLoads and manages security scanning plugins from the plugins directory.\n"""\nimport os\nimport sys\nimport importlib.util\nimport logging\nfrom typing import List, Dict, Any, Optional\nfrom pathlib import Path\n\nlogger = logging.getLogger(__name__)\n\n\nclass PluginManager:\n    \"\"\"\n    Manager for dynamically loading and executing security plugins.\n    Plugins should be placed in the plugins/ directory and must implement\n    a run() method that accepts response and url parameters.\n    \"\"\"\n    \n    def __init__(self, plugins_dir: str = 'plugins'):\n        \"\"\"\n        Initialize the plugin manager.\n        \n        Args:\n            plugins_dir: Directory containing plugin modules\n        \"\"\"\n        self.plugins_dir = plugins_dir\n        self.plugins = []\n        self._load_plugins()\n    \n    def _load_plugins(self):\n        \"\"\"Load all plugins from the plugins directory.\"\"\"\n        plugins_path = Path(self.plugins_dir)\n        \n        if not plugins_path.exists():\n            logger.warning(f\"Plugins directory '{self.plugins_dir}' does not exist\")\n            return\n        \n        # Find all Python files in plugins directory, except underscores\n        plugin_files = [f for f in plugins_path.glob('*.py') if not f.name.startswith('_')]\n        \n        logger.info(f\"Loading plugins from {self.plugins_dir}\")\n        \n        for plugin_file in plugin_files:\n            try:\n                module_name = plugin_file.stem\n                spec = importlib.util.spec_from_file_location(module_name, plugin_file)\n                module = importlib.util.module_from_spec(spec)\n                spec.loader.exec_module(module)\n                \n                # Check for plugin_entry attribute\n                plugin_entry = getattr(module, 'plugin_entry', None)\n                if plugin_entry is None:\n                    logger.warning(f\"[RedCortex] Skipped plugin '{module.__name__}': no entry (dependency missing?)\")\n                    continue\n                \n                # Plugins must have a 'run' function\n                if hasattr(module, 'run'):\n                    self.plugins.append({\n                        'name': module_name,\n                        'module': module,\n                        'description': getattr(module, '__doc__', 'No description')\n                    })\n                    logger.info(f\"Loaded plugin: {module_name}\")\n                else:\n                    logger.warning(f\"Plugin {module_name} does not have a run() method\")\n                    \n            except Exception as e:\n                logger.error(f\"Failed to load plugin {plugin_file.name}: {str(e)}\")\n    \n    def run_plugins(self, response, url: str) -> List[Dict[str, Any]]:\n        \"\"\"\n        Run all loaded plugins on a response.\n        \n        Args:\n            response: HTTP response object\n            url: URL that was scanned\n            \n        Returns:\n            List of findings from all plugins\n        \"\"\"\n        findings = []\n        \n        for plugin in self.plugins:\n            try:\n                logger.debug(f\"Running plugin: {plugin['name']} on {url}\")\n                result = plugin['module'].run(response, url)\n                \n                if result:\n                    if isinstance(result, dict):\n                        result = [result]\n                    \n                    # Annotate findings with plugin name\n                    for finding in result:\n                        finding['plugin'] = plugin['name']\n                        findings.append(finding)\n                        \n            except Exception as e:\n                logger.error(f\"Error running plugin {plugin['name']}: {str(e)}\")\n        \n        return findings\n    \n    def run_all(self, endpoints: List[Any]) -> List[Dict[str, Any]]:\n        \"\"\"\n        Run all plugins for each endpoint result in the endpoints list.\n        Each entry: usually a dict with keys 'url' or simply a URL string.\n        Returns: list of all findings across all endpoints/plugins.\n        \"\"\"\n        all_findings = []\n        \n        for ep in endpoints:\n            url = ep['url'] if isinstance(ep, dict) and 'url' in ep else ep\n            response = ep.get('response', None) if isinstance(ep, dict) else None\n            findings = self.run_plugins(response, url)\n            \n            if findings:\n                all_findings.extend(findings)\n        \n        return all_findings\n    \n    def list_plugins(self) -> List[Dict[str, str]]:\n        \"\"\"\n        List all loaded plugins.\n        \n        Returns:\n            List of plugin information dictionaries\n        \"\"\"\n        return [\n            {\n                'name': p['name'],\n                'description': p['description']\n            }\n            for p in self.plugins\n        ]\n    \n    def get_plugin_count(self) -> int:\n        \"\"\"\n        Get the number of loaded plugins.\n        \n        Returns:\n            Number of plugins loaded\n        \"\"\"\n        return len(self.plugins)\n    \n    @staticmethod\n    def list_plugin_names(plugins_dir: str = 'plugins') -> List[str]:\n        \"\"\"Static helper for just names—for CLI help usage.\"\"\"\n        plugins_path = Path(plugins_dir)\n        return [f.stem for f in plugins_path.glob('*.py') if not f.name.startswith('_')]
+"""
+Dynamic plugin management for RedCortex.
+Loads and manages security scanning plugins from the plugins directory.
+"""
+import os
+import sys
+import importlib.util
+import logging
+from typing import List, Dict, Any, Optional
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+class PluginManager:
+    """
+    Manager for dynamically loading and executing security plugins.
+    Plugins should be placed in the plugins/ directory and must implement
+    a run() method that accepts response and url parameters.
+    """
+    
+    def __init__(self, plugins_dir: str = 'plugins'):
+        """
+        Initialize the plugin manager.
+        
+        Args:
+            plugins_dir: Directory containing plugin modules
+        """
+        self.plugins_dir = plugins_dir
+        self.plugins = []
+        self._load_plugins()
+    
+    def _load_plugins(self):
+        """Load all plugins from the plugins directory."""
+        plugins_path = Path(self.plugins_dir)
+        
+        if not plugins_path.exists():
+            logger.warning(f"Plugins directory '{self.plugins_dir}' does not exist")
+            return
+        
+        # Find all Python files in plugins directory, except underscores
+        plugin_files = [f for f in plugins_path.glob('*.py') if not f.name.startswith('_')]
+        
+        logger.info(f"Loading plugins from {self.plugins_dir}")
+        
+        for plugin_file in plugin_files:
+            try:
+                module_name = plugin_file.stem
+                spec = importlib.util.spec_from_file_location(module_name, plugin_file)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                
+                # Check for plugin_entry attribute
+                plugin_entry = getattr(module, 'plugin_entry', None)
+                if plugin_entry is None:
+                    logger.warning(f"[RedCortex] Skipped plugin '{module.__name__}': no entry (dependency missing?)")
+                    continue
+                
+                # Plugins must have a 'run' function
+                if hasattr(module, 'run'):
+                    self.plugins.append({
+                        'name': module_name,
+                        'module': module,
+                        'description': getattr(module, '__doc__', 'No description')
+                    })
+                    logger.info(f"Loaded plugin: {module_name}")
+                else:
+                    logger.warning(f"Plugin {module_name} does not have a run() method")
+                    
+            except Exception as e:
+                logger.error(f"Failed to load plugin {plugin_file.name}: {str(e)}")
+    
+    def run_plugins(self, response, url: str) -> List[Dict[str, Any]]:
+        """
+        Run all loaded plugins on a response.
+        
+        Args:
+            response: HTTP response object
+            url: URL that was scanned
+            
+        Returns:
+            List of findings from all plugins
+        """
+        findings = []
+        
+        for plugin in self.plugins:
+            try:
+                logger.debug(f"Running plugin: {plugin['name']} on {url}")
+                result = plugin['module'].run(response, url)
+                
+                if result:
+                    if isinstance(result, dict):
+                        result = [result]
+                    
+                    # Annotate findings with plugin name
+                    for finding in result:
+                        finding['plugin'] = plugin['name']
+                        findings.append(finding)
+                        
+            except Exception as e:
+                logger.error(f"Error running plugin {plugin['name']}: {str(e)}")
+        
+        return findings
+    
+    def run_all(self, endpoints: List[Any]) -> List[Dict[str, Any]]:
+        """
+        Run all plugins for each endpoint result in the endpoints list.
+        Each entry: usually a dict with keys 'url' or simply a URL string.
+        Returns: list of all findings across all endpoints/plugins.
+        """
+        all_findings = []
+        
+        for ep in endpoints:
+            url = ep['url'] if isinstance(ep, dict) and 'url' in ep else ep
+            response = ep.get('response', None) if isinstance(ep, dict) else None
+            findings = self.run_plugins(response, url)
+            
+            if findings:
+                all_findings.extend(findings)
+        
+        return all_findings
+    
+    def list_plugins(self) -> List[Dict[str, str]]:
+        """
+        List all loaded plugins.
+        
+        Returns:
+            List of plugin information dictionaries
+        """
+        return [
+            {
+                'name': p['name'],
+                'description': p['description']
+            }
+            for p in self.plugins
+        ]
+    
+    def get_plugin_count(self) -> int:
+        """
+        Get the number of loaded plugins.
+        
+        Returns:
+            Number of plugins loaded
+        """
+        return len(self.plugins)
+    
+    @staticmethod
+    def list_plugin_names(plugins_dir: str = 'plugins') -> List[str]:
+        """Static helper for just names—for CLI help usage."""
+        plugins_path = Path(plugins_dir)
+        return [f.stem for f in plugins_path.glob('*.py') if not f.name.startswith('_')]
