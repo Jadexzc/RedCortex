@@ -1,126 +1,136 @@
-"""Endpoint discovery module for RedCortex.
-Handles scanning endpoints for vulnerabilities and exposures.
 """
-import requests
+Dynamic plugin management for RedCortex.
+Loads and manages security scanning plugins from the plugins directory.
+"""
+
+import os
+import sys
+import importlib.util
 import logging
-from typing import Dict, List, Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urljoin, urlparse
+from typing import List, Dict, Any, Optional
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-class EndpointScanner:
-    """Scanner for discovering and analyzing endpoints.
-    Performs concurrent scanning of multiple endpoints for security issues.
+class PluginManager:
     """
-    def __init__(self, config, plugin_manager):
-        """Initialize the endpoint scanner.
+    Manager for dynamically loading and executing security plugins.
+
+    Plugins should be placed in the plugins/ directory and must implement
+    a run() method that accepts response and url parameters.
+    """
+
+    def __init__(self, plugins_dir: str = 'plugins'):
+        """
+        Initialize the plugin manager.
+
         Args:
-            config: Configuration object
-            plugin_manager: Plugin manager for running security checks
+            plugins_dir: Directory containing plugin modules
         """
-        self.config = config
-        self.plugin_manager = plugin_manager
-        self.timeout = config.timeout
-        self.session = self._create_session()
+        self.plugins_dir = plugins_dir
+        self.plugins = []
+        self._load_plugins()
 
-    def _create_session(self) -> requests.Session:
-        """Create a configured requests session.
-        Returns:
-            Configured requests session
+    def _load_plugins(self):
+        """Load all plugins from the plugins directory."""
+        plugins_path = Path(self.plugins_dir)
+        if not plugins_path.exists():
+            logger.warning(f"Plugins directory '{self.plugins_dir}' does not exist")
+            return
+
+        # Find all Python files in plugins directory, except underscores
+        plugin_files = [f for f in plugins_path.glob('*.py') if not f.name.startswith('_')]
+
+        logger.info(f"Loading plugins from {self.plugins_dir}")
+        for plugin_file in plugin_files:
+            try:
+                module_name = plugin_file.stem
+                spec = importlib.util.spec_from_file_location(module_name, plugin_file)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+
+                # Plugins must have a 'run' function
+                if hasattr(module, 'run'):
+                    self.plugins.append({
+                        'name': module_name,
+                        'module': module,
+                        'description': getattr(module, '__doc__', 'No description')
+                    })
+                    logger.info(f"Loaded plugin: {module_name}")
+                else:
+                    logger.warning(f"Plugin {module_name} does not have a run() method")
+
+            except Exception as e:
+                logger.error(f"Failed to load plugin {plugin_file.name}: {str(e)}")
+
+    def run_plugins(self, response, url: str) -> List[Dict[str, Any]]:
         """
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': self.config.get_user_agent()
-        })
-        return session
+        Run all loaded plugins on a response.
 
-    def discover(self) -> List[str]:
-        '''Discover endpoints for scanning. Returns a list of endpoint URLs.'''
-        if hasattr(self.config, 'target_url'):
-            return [self.config.target_url]
-        return []
-
-    def scan_endpoint(self, url: str, path: str) -> Dict:
-        """Scan a single endpoint.
         Args:
-            url: Base URL to scan
-            path: Path to append to base URL
-        Returns:
-            Dictionary containing scan results
-        """
-        full_url = urljoin(url, path)
-        result = {
-            'url': full_url,
-            'path': path,
-            'accessible': False,
-            'status': None,
-            'findings': []
-        }
-        try:
-            response = self.session.get(full_url, timeout=self.timeout, allow_redirects=True)
-            result['accessible'] = True
-            result['status'] = response.status_code
-            # Run plugins on the response
-            if self.plugin_manager:
-                findings = self.plugin_manager.run_plugins(response, full_url)
-                result['findings'] = findings
-        except requests.exceptions.Timeout:
-            logger.debug(f"Timeout accessing {full_url}")
-        except requests.exceptions.RequestException as e:
-            logger.debug(f"Error accessing {full_url}: {str(e)}")
-        return result
+            response: HTTP response object
+            url: URL that was scanned
 
-    def scan_multiple(self, target_url: str, paths: Optional[List[str]] = None) -> List[Dict]:
-        """Scan multiple endpoints concurrently.
-        Args:
-            target_url: Base URL to scan
-            paths: List of paths to scan (defaults to config paths if None)
         Returns:
-            List of scan results
+            List of findings from all plugins
         """
-        if paths is None:
-            paths = self.config.get_paths()
-        logger.info(f"Starting scan of {target_url} with {len(paths)} paths")
-        logger.info(f"Using {self.config.max_workers} concurrent workers")
-        results = []
-        with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
-            future_to_path = {
-                executor.submit(self.scan_endpoint, target_url, path): path
-                for path in paths
+        findings = []
+        for plugin in self.plugins:
+            try:
+                logger.debug(f"Running plugin: {plugin['name']} on {url}")
+                result = plugin['module'].run(response, url)
+                if result:
+                    if isinstance(result, dict):
+                        result = [result]
+                    # Annotate findings with plugin name
+                    for finding in result:
+                        finding['plugin'] = plugin['name']
+                        findings.append(finding)
+            except Exception as e:
+                logger.error(f"Error running plugin {plugin['name']}: {str(e)}")
+        return findings
+
+    def run_all(self, endpoints: List[Any]) -> List[Dict[str, Any]]:
+        """
+        Run all plugins for each endpoint result in the endpoints list.
+        Each entry: usually a dict with keys 'url' or simply a URL string.
+        Returns: list of all findings across all endpoints/plugins.
+        """
+        all_findings = []
+        for ep in endpoints:
+            url = ep['url'] if isinstance(ep, dict) and 'url' in ep else ep
+            response = ep.get('response', None) if isinstance(ep, dict) else None
+            findings = self.run_plugins(response, url)
+            if findings:
+                all_findings.extend(findings)
+        return all_findings
+
+    def list_plugins(self) -> List[Dict[str, str]]:
+        """
+        List all loaded plugins.
+
+        Returns:
+            List of plugin information dictionaries
+        """
+        return [
+            {
+                'name': p['name'],
+                'description': p['description']
             }
-            for future in as_completed(future_to_path):
-                path = future_to_path[future]
-                try:
-                    result = future.result()
-                    results.append(result)
-                    # Log significant findings
-                    if result['accessible']:
-                        logger.info(f"✓ {result['url']} - Status: {result['status']}")
-                        if result['findings']:
-                            for finding in result['findings']:
-                                logger.warning(f"  ⚠ {finding['severity']}: {finding['description']}")
-                except Exception as e:
-                    logger.error(f"Failed to scan path {path}: {str(e)}")
-        logger.info(f"Scan complete. Found {len([r for r in results if r['accessible']])} accessible endpoints")
-        return results
+            for p in self.plugins
+        ]
 
-    def scan_target(self) -> List[Dict]:
+    def get_plugin_count(self) -> int:
         """
-        Convenience alias for scan_multiple using config target_url and paths.
-        Returns: List of scan results dicts
-        """
-        return self.scan_multiple(self.config.target_url)
+        Get the number of loaded plugins.
 
-    def validate_url(self, url: str) -> bool:
-        """Validate if URL is properly formatted.
-        Args:
-            url: URL to validate
         Returns:
-            True if valid, False otherwise
+            Number of plugins loaded
         """
-        try:
-            result = urlparse(url)
-            return all([result.scheme, result.netloc])
-        except Exception:
-            return False
+        return len(self.plugins)
+
+    @staticmethod
+    def list_plugin_names(plugins_dir: str = 'plugins') -> List[str]:
+        """Static helper for just names—for CLI help usage."""
+        plugins_path = Path(plugins_dir)
+        return [f.stem for f in plugins_path.glob('*.py') if not f.name.startswith('_')]
